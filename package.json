@@ -1,0 +1,18 @@
+{
+  "name": "temp-voice-bot",
+  "version": "1.0.0",
+  "description": "Discord temp voice bot with control panel",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "1MeterPeter",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "discord.js": "^14.26.2",
+    "dotenv": "^17.4.2"
+  }
+}
