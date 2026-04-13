@@ -1,5 +1,5 @@
-const { findOwnedChannelByUser, getGuildData } = require("../utils/store");
-const { createTempChannel, deleteTempChannelSet } = require("../services/tempChannelService");
+const { findOwnedChannelByUser, getGuildData, getTempChannel } = require("../utils/store");
+const { createTempChannel, deleteTempChannelSet, transferOwnership } = require("../services/tempChannelService");
 
 const creationLocks = new Set();
 
@@ -8,13 +8,14 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
     const guild = newState.guild || oldState.guild;
     if (!guild) return;
 
-    const member = newState.member;
+    const member = newState.member || oldState.member;
     if (!member || member.user.bot) return;
 
     const joinToCreateId = process.env.JOIN_TO_CREATE_CHANNEL_ID;
     const oldChannelId = oldState.channelId;
     const newChannelId = newState.channelId;
 
+    // Join-to-create
     if (
       newChannelId === joinToCreateId &&
       oldChannelId !== joinToCreateId &&
@@ -44,15 +45,33 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
       return;
     }
 
+    // Prüfen, ob jemand einen Temp-Channel verlassen hat
     if (oldChannelId) {
-      const guildData = getGuildData(guild.id);
-      const tempData = guildData.channels?.[oldChannelId];
+      const tempData = getTempChannel(guild.id, oldChannelId);
+      if (!tempData) return;
 
-      if (tempData) {
-        const oldChannel = guild.channels.cache.get(oldChannelId);
+      const oldChannel = guild.channels.cache.get(oldChannelId);
 
-        if (!oldChannel || oldChannel.members.size === 0) {
-          await deleteTempChannelSet(guild, oldChannelId).catch(console.error);
+      // Channel existiert nicht mehr
+      if (!oldChannel) {
+        await deleteTempChannelSet(guild, oldChannelId).catch(console.error);
+        return;
+      }
+
+      // Leer -> löschen
+      if (oldChannel.members.size === 0) {
+        await deleteTempChannelSet(guild, oldChannelId).catch(console.error);
+        return;
+      }
+
+      // Owner ist raus -> Ownership an nächsten aktiven User übertragen
+      if (tempData.ownerId === member.id) {
+        const remainingMembers = [...oldChannel.members.values()]
+          .filter((m) => !m.user.bot);
+
+        if (remainingMembers.length > 0) {
+          const newOwner = remainingMembers[0];
+          await transferOwnership(guild, oldChannelId, newOwner.id).catch(console.error);
         }
       }
     }

@@ -278,11 +278,28 @@ async function transferOwnership(guild, voiceChannelId, newOwnerId) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
   if (!channelData) return false;
 
+  const previousOwnerId = channelData.ownerId;
   channelData.ownerId = newOwnerId;
-  normalizeLists(channelData);
 
+  channelData.whitelist = (channelData.whitelist || []).filter((id) => id !== newOwnerId);
+  channelData.blacklist = (channelData.blacklist || []).filter((id) => id !== newOwnerId);
+
+  normalizeLists(channelData);
   saveTempChannel(guild.id, voiceChannelId, channelData);
+
+  // Profil des neuen Owners speichern
   persistOwnerProfile(guild.id, channelData);
+
+  // Optional: altem Owner sein Profil erhalten lassen, aber ohne Ownership
+  if (previousOwnerId && previousOwnerId !== newOwnerId) {
+    saveUserProfile(guild.id, previousOwnerId, {
+      name: channelData.name,
+      userLimit: channelData.userLimit,
+      isPrivate: channelData.isPrivate,
+      whitelist: channelData.whitelist || [],
+      blacklist: channelData.blacklist || []
+    });
+  }
 
   await applyPermissions(guild, voiceChannelId);
   await updatePanel(guild, voiceChannelId);

@@ -4,7 +4,7 @@ const {
   TextInputStyle,
   PermissionFlagsBits,
   StringSelectMenuBuilder,
-  UserSelectMenuBuilder,
+  ActionRowBuilder,
   LabelBuilder
 } = require("discord.js");
 
@@ -22,12 +22,7 @@ const {
 
 function isManager(interaction, channelData) {
   if (!interaction.member) return false;
-  if (interaction.user.id === channelData.ownerId) return true;
-
-  return (
-    settings.allowAdminsToManage &&
-    interaction.member.permissions.has(PermissionFlagsBits.Administrator)
-  );
+  return interaction.user.id === channelData.ownerId;
 }
 
 function buildEditModal(voiceChannelId, channelData) {
@@ -71,21 +66,21 @@ function buildEditModal(voiceChannelId, channelData) {
     );
 }
 
-function buildOwnerModal(voiceChannelId) {
-  const ownerSelect = new UserSelectMenuBuilder()
-    .setCustomId("new_owner")
-    .setPlaceholder("Mitglied auswählen")
-    .setMinValues(1)
-    .setMaxValues(1);
+function buildOwnerSelectRow(voiceChannelId, members) {
+  const options = members.slice(0, 25).map((member) => ({
+    label: member.displayName.slice(0, 100),
+    value: member.id,
+    description: `ID: ${member.id}`.slice(0, 100)
+  }));
 
-  return new ModalBuilder()
-    .setCustomId(`tempvc_modal:owner:${voiceChannelId}`)
-    .setTitle("Change Owner")
-    .addLabelComponents(
-      new LabelBuilder()
-        .setLabel("Member")
-        .setUserSelectMenuComponent(ownerSelect)
-    );
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`tempvc_select:owner:${voiceChannelId}`)
+      .setPlaceholder("Neuen Owner auswählen")
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addOptions(options)
+  );
 }
 
 function buildListModal(voiceChannelId, type) {
@@ -99,22 +94,24 @@ function buildListModal(voiceChannelId, type) {
       { label: "Remove", value: "remove" }
     ]);
 
-  const userSelect = new UserSelectMenuBuilder()
+  const memberInput = new TextInputBuilder()
     .setCustomId("list_users")
-    .setPlaceholder("Mitglieder auswählen")
-    .setMinValues(1)
-    .setMaxValues(10);
+    .setLabel("User IDs (mit Komma getrennt)")
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setPlaceholder("123456789, 987654321")
+    .setMaxLength(1000);
 
   return new ModalBuilder()
     .setCustomId(`tempvc_modal:${type}:${voiceChannelId}`)
-    .setTitle(type === "whitelist" ? "Whitelist Member" : "Blacklist Member")
+    .setTitle(type === "whitelist" ? "Whitelist verwalten" : "Blacklist verwalten")
     .addLabelComponents(
       new LabelBuilder()
         .setLabel("Action")
         .setStringSelectMenuComponent(actionSelect),
       new LabelBuilder()
-        .setLabel("Member")
-        .setUserSelectMenuComponent(userSelect)
+        .setLabel("Member IDs")
+        .setTextInputComponent(memberInput)
     );
 }
 
@@ -135,7 +132,7 @@ module.exports = async function handleInteractionCreate(interaction) {
 
       if (!isManager(interaction, channelData)) {
         await interaction.reply({
-          content: "Nur der Besitzer oder ein Admin darf dieses Panel benutzen.",
+          content: "Nur der aktuelle Owner darf dieses Panel benutzen.",
           ephemeral: true
         });
         return;
@@ -161,13 +158,17 @@ module.exports = async function handleInteractionCreate(interaction) {
 
         if (membersInVoice.length === 0) {
           await interaction.reply({
-            content: "Der Besitzer kann aktuell nicht gewechselt werden, weil niemand anderes im Voice-Channel ist.",
+            content: "Der Owner kann aktuell nicht gewechselt werden, weil niemand anderes im Voice-Channel ist.",
             ephemeral: true
           });
           return;
         }
 
-        await interaction.showModal(buildOwnerModal(voiceChannelId));
+        await interaction.reply({
+          content: "Wähle den neuen Owner aus:",
+          components: [buildOwnerSelectRow(voiceChannelId, membersInVoice)],
+          ephemeral: true
+        });
         return;
       }
 
@@ -178,6 +179,62 @@ module.exports = async function handleInteractionCreate(interaction) {
 
       if (action === "blacklist") {
         await interaction.showModal(buildListModal(voiceChannelId, "blacklist"));
+        return;
+      }
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      const [prefix, action, voiceChannelId] = interaction.customId.split(":");
+      if (prefix !== "tempvc_select") return;
+
+      const channelData = getTempChannel(interaction.guild.id, voiceChannelId);
+      if (!channelData) {
+        await interaction.reply({
+          content: "Dieser Temp-Channel existiert nicht mehr.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!isManager(interaction, channelData)) {
+        await interaction.reply({
+          content: "Nur der aktuelle Owner darf dieses Panel benutzen.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      const voiceChannel = interaction.guild.channels.cache.get(voiceChannelId);
+      if (!voiceChannel) {
+        await interaction.reply({
+          content: "Der Voice-Channel wurde nicht gefunden.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (action === "owner") {
+        const selectedOwnerId = interaction.values[0];
+
+        const validMemberIds = [...voiceChannel.members.values()]
+          .filter((m) => !m.user.bot && m.id !== channelData.ownerId)
+          .map((m) => m.id);
+
+        if (!validMemberIds.includes(selectedOwnerId)) {
+          await interaction.update({
+            content: "Der ausgewählte User ist nicht mehr im Voice-Channel.",
+            components: []
+          });
+          return;
+        }
+
+        await transferOwnership(interaction.guild, voiceChannelId, selectedOwnerId);
+        await updatePanel(interaction.guild, voiceChannelId);
+
+        await interaction.update({
+          content: `Ownership wurde an <@${selectedOwnerId}> übertragen.`,
+          components: []
+        });
         return;
       }
     }
@@ -201,16 +258,7 @@ module.exports = async function handleInteractionCreate(interaction) {
 
       if (!isManager(interaction, channelData)) {
         await interaction.reply({
-          content: "Nur der Besitzer oder ein Admin darf dieses Panel benutzen.",
-          ephemeral: true
-        });
-        return;
-      }
-
-      const voiceChannel = interaction.guild.channels.cache.get(voiceChannelId);
-      if (!voiceChannel) {
-        await interaction.reply({
-          content: "Der Voice-Channel wurde nicht gefunden.",
+          content: "Nur der aktuelle Owner darf dieses Panel benutzen.",
           ephemeral: true
         });
         return;
@@ -242,48 +290,18 @@ module.exports = async function handleInteractionCreate(interaction) {
         return;
       }
 
-      if (action === "owner") {
-        const selectedUsers = interaction.fields.getSelectedUsers("new_owner");
-        const newOwnerId = selectedUsers?.first()?.id;
-
-        if (!newOwnerId) {
-          await interaction.reply({
-            content: "Es wurde kein neuer Besitzer ausgewählt.",
-            ephemeral: true
-          });
-          return;
-        }
-
-        const validMemberIds = [...voiceChannel.members.values()]
-          .filter((m) => !m.user.bot && m.id !== channelData.ownerId)
-          .map((m) => m.id);
-
-        if (!validMemberIds.includes(newOwnerId)) {
-          await interaction.reply({
-            content: "Der neue Besitzer muss aktuell im Voice-Channel anwesend sein.",
-            ephemeral: true
-          });
-          return;
-        }
-
-        await transferOwnership(interaction.guild, voiceChannelId, newOwnerId);
-        await updatePanel(interaction.guild, voiceChannelId);
-
-        await interaction.reply({
-          content: `Der Besitzer wurde an <@${newOwnerId}> übertragen.`,
-          ephemeral: true
-        });
-        return;
-      }
-
       if (action === "whitelist" || action === "blacklist") {
         const listAction = interaction.fields.getStringSelectValues("list_action")[0];
-        const selectedUsers = interaction.fields.getSelectedUsers("list_users");
-        const userIds = selectedUsers ? [...selectedUsers.keys()] : [];
+        const rawIds = interaction.fields.getTextInputValue("list_users");
+
+        const userIds = rawIds
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => /^\d{5,}$/.test(id));
 
         if (userIds.length === 0) {
           await interaction.reply({
-            content: "Es wurden keine Nutzer ausgewählt.",
+            content: "Bitte gib mindestens eine gültige User-ID ein.",
             ephemeral: true
           });
           return;
