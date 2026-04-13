@@ -2,13 +2,14 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  PermissionFlagsBits,
   StringSelectMenuBuilder,
+  LabelBuilder,
+  UserSelectMenuBuilder,
   ActionRowBuilder,
-  LabelBuilder
+  ButtonBuilder,
+  ButtonStyle
 } = require("discord.js");
 
-const settings = require("../config/settings");
 const { getTempChannel } = require("../utils/store");
 const {
   setPrivacy,
@@ -23,6 +24,12 @@ const {
 function isManager(interaction, channelData) {
   if (!interaction.member) return false;
   return interaction.user.id === channelData.ownerId;
+}
+
+function getActiveVoiceMembers(voiceChannel, ownerId = null) {
+  return [...voiceChannel.members.values()].filter(
+    (member) => !member.user.bot && member.id !== ownerId
+  );
 }
 
 function buildEditModal(voiceChannelId, channelData) {
@@ -66,57 +73,109 @@ function buildEditModal(voiceChannelId, channelData) {
     );
 }
 
-function buildOwnerSelectRow(voiceChannelId, members) {
+function buildOwnerModal(voiceChannelId, members) {
   const options = members.slice(0, 25).map((member) => ({
     label: member.displayName.slice(0, 100),
     value: member.id,
-    description: `ID: ${member.id}`.slice(0, 100)
+    description: "Aktiv im Voice"
   }));
 
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(`tempvc_select:owner:${voiceChannelId}`)
-      .setPlaceholder("Neuen Owner auswählen")
-      .setMinValues(1)
-      .setMaxValues(1)
-      .addOptions(options)
-  );
-}
-
-function buildListModal(voiceChannelId, type) {
-  const actionSelect = new StringSelectMenuBuilder()
-    .setCustomId("list_action")
-    .setPlaceholder("Aktion auswählen")
+  const ownerSelect = new StringSelectMenuBuilder()
+    .setCustomId("new_owner")
+    .setPlaceholder("Neuen Owner auswählen")
     .setMinValues(1)
     .setMaxValues(1)
-    .addOptions([
-      { label: "Add", value: "add" },
-      { label: "Remove", value: "remove" }
-    ]);
-
-  const memberInput = new TextInputBuilder()
-    .setCustomId("list_users")
-    .setLabel("User IDs (mit Komma getrennt)")
-    .setStyle(TextInputStyle.Paragraph)
-    .setRequired(true)
-    .setPlaceholder("123456789, 987654321")
-    .setMaxLength(1000);
+    .addOptions(options);
 
   return new ModalBuilder()
-    .setCustomId(`tempvc_modal:${type}:${voiceChannelId}`)
-    .setTitle(type === "whitelist" ? "Whitelist verwalten" : "Blacklist verwalten")
+    .setCustomId(`tempvc_modal:owner:${voiceChannelId}`)
+    .setTitle("Change Owner")
     .addLabelComponents(
       new LabelBuilder()
-        .setLabel("Action")
-        .setStringSelectMenuComponent(actionSelect),
+        .setLabel("Active Members")
+        .setStringSelectMenuComponent(ownerSelect)
+    );
+}
+
+function buildListChoiceMessage(listType, voiceChannelId) {
+  const title = listType === "whitelist" ? "Whitelist" : "Blacklist";
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`tempvc:${listType}_add:${voiceChannelId}`)
+      .setLabel("Add")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`tempvc:${listType}_remove:${voiceChannelId}`)
+      .setLabel("Remove")
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  return {
+    content: `${title} verwalten:`,
+    components: [row],
+    ephemeral: true
+  };
+}
+
+function buildListAddModal(voiceChannelId, type) {
+  const userSelect = new UserSelectMenuBuilder()
+    .setCustomId("list_users")
+    .setPlaceholder("Mitglieder auswählen")
+    .setMinValues(1)
+    .setMaxValues(10);
+
+  return new ModalBuilder()
+    .setCustomId(`tempvc_modal:${type}_add:${voiceChannelId}`)
+    .setTitle(type === "whitelist" ? "Add to Whitelist" : "Add to Blacklist")
+    .addLabelComponents(
       new LabelBuilder()
-        .setLabel("Member IDs")
-        .setTextInputComponent(memberInput)
+        .setLabel("Server Members")
+        .setUserSelectMenuComponent(userSelect)
+    );
+}
+
+function buildListRemoveModal(voiceChannelId, type, guild, listedUserIds) {
+  const validIds = (listedUserIds || []).filter((id) => guild.members.cache.has(id));
+
+  if (validIds.length === 0) {
+    return null;
+  }
+
+  const options = validIds.slice(0, 25).map((userId) => {
+    const member = guild.members.cache.get(userId);
+    const label =
+      member?.displayName?.slice(0, 100) ||
+      member?.user?.username?.slice(0, 100) ||
+      `User ${userId}`.slice(0, 100);
+
+    return {
+      label,
+      value: userId,
+      description: "Bereits auf der Liste"
+    };
+  });
+
+  const removeSelect = new StringSelectMenuBuilder()
+    .setCustomId("list_users")
+    .setPlaceholder("Mitglieder auswählen")
+    .setMinValues(1)
+    .setMaxValues(Math.min(options.length, 10))
+    .addOptions(options);
+
+  return new ModalBuilder()
+    .setCustomId(`tempvc_modal:${type}_remove:${voiceChannelId}`)
+    .setTitle(type === "whitelist" ? "Remove from Whitelist" : "Remove from Blacklist")
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel("Listed Members")
+        .setStringSelectMenuComponent(removeSelect)
     );
 }
 
 module.exports = async function handleInteractionCreate(interaction) {
   try {
+    // Button-Klicks
     if (interaction.isButton()) {
       const [prefix, action, voiceChannelId] = interaction.customId.split(":");
       if (prefix !== "tempvc") return;
@@ -153,8 +212,7 @@ module.exports = async function handleInteractionCreate(interaction) {
       }
 
       if (action === "owner") {
-        const membersInVoice = [...voiceChannel.members.values()]
-          .filter((m) => !m.user.bot && m.id !== channelData.ownerId);
+        const membersInVoice = getActiveVoiceMembers(voiceChannel, channelData.ownerId);
 
         if (membersInVoice.length === 0) {
           await interaction.reply({
@@ -164,28 +222,79 @@ module.exports = async function handleInteractionCreate(interaction) {
           return;
         }
 
-        await interaction.reply({
-          content: "Wähle den neuen Owner aus:",
-          components: [buildOwnerSelectRow(voiceChannelId, membersInVoice)],
-          ephemeral: true
-        });
+        await interaction.showModal(buildOwnerModal(voiceChannelId, membersInVoice));
         return;
       }
 
       if (action === "whitelist") {
-        await interaction.showModal(buildListModal(voiceChannelId, "whitelist"));
+        await interaction.reply(buildListChoiceMessage("whitelist", voiceChannelId));
         return;
       }
 
       if (action === "blacklist") {
-        await interaction.showModal(buildListModal(voiceChannelId, "blacklist"));
+        await interaction.reply(buildListChoiceMessage("blacklist", voiceChannelId));
+        return;
+      }
+
+      if (action === "whitelist_add") {
+        await interaction.showModal(buildListAddModal(voiceChannelId, "whitelist"));
+        return;
+      }
+
+      if (action === "blacklist_add") {
+        await interaction.showModal(buildListAddModal(voiceChannelId, "blacklist"));
+        return;
+      }
+
+      if (action === "whitelist_remove") {
+        const removeModal = buildListRemoveModal(
+          voiceChannelId,
+          "whitelist",
+          interaction.guild,
+          channelData.whitelist || []
+        );
+
+        if (!removeModal) {
+          await interaction.reply({
+            content: "Die Whitelist ist aktuell leer.",
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.showModal(removeModal);
+        return;
+      }
+
+      if (action === "blacklist_remove") {
+        const removeModal = buildListRemoveModal(
+          voiceChannelId,
+          "blacklist",
+          interaction.guild,
+          channelData.blacklist || []
+        );
+
+        if (!removeModal) {
+          await interaction.reply({
+            content: "Die Blacklist ist aktuell leer.",
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.showModal(removeModal);
         return;
       }
     }
 
-    if (interaction.isStringSelectMenu()) {
-      const [prefix, action, voiceChannelId] = interaction.customId.split(":");
-      if (prefix !== "tempvc_select") return;
+    // Modal-Submits
+    if (interaction.isModalSubmit()) {
+      const parts = interaction.customId.split(":");
+      const prefix = parts[0];
+      const action = parts[1];
+      const voiceChannelId = parts[2];
+
+      if (prefix !== "tempvc_modal") return;
 
       const channelData = getTempChannel(interaction.guild.id, voiceChannelId);
       if (!channelData) {
@@ -208,57 +317,6 @@ module.exports = async function handleInteractionCreate(interaction) {
       if (!voiceChannel) {
         await interaction.reply({
           content: "Der Voice-Channel wurde nicht gefunden.",
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (action === "owner") {
-        const selectedOwnerId = interaction.values[0];
-
-        const validMemberIds = [...voiceChannel.members.values()]
-          .filter((m) => !m.user.bot && m.id !== channelData.ownerId)
-          .map((m) => m.id);
-
-        if (!validMemberIds.includes(selectedOwnerId)) {
-          await interaction.update({
-            content: "Der ausgewählte User ist nicht mehr im Voice-Channel.",
-            components: []
-          });
-          return;
-        }
-
-        await transferOwnership(interaction.guild, voiceChannelId, selectedOwnerId);
-        await updatePanel(interaction.guild, voiceChannelId);
-
-        await interaction.update({
-          content: `Ownership wurde an <@${selectedOwnerId}> übertragen.`,
-          components: []
-        });
-        return;
-      }
-    }
-
-    if (interaction.isModalSubmit()) {
-      const parts = interaction.customId.split(":");
-      const prefix = parts[0];
-      const action = parts[1];
-      const voiceChannelId = parts[2];
-
-      if (prefix !== "tempvc_modal") return;
-
-      const channelData = getTempChannel(interaction.guild.id, voiceChannelId);
-      if (!channelData) {
-        await interaction.reply({
-          content: "Dieser Temp-Channel existiert nicht mehr.",
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (!isManager(interaction, channelData)) {
-        await interaction.reply({
-          content: "Nur der aktuelle Owner darf dieses Panel benutzen.",
           ephemeral: true
         });
         return;
@@ -290,35 +348,74 @@ module.exports = async function handleInteractionCreate(interaction) {
         return;
       }
 
-      if (action === "whitelist" || action === "blacklist") {
-        const listAction = interaction.fields.getStringSelectValues("list_action")[0];
-        const rawIds = interaction.fields.getTextInputValue("list_users");
+      if (action === "owner") {
+        const selectedOwnerId = interaction.fields.getStringSelectValues("new_owner")[0];
 
-        const userIds = rawIds
-          .split(",")
-          .map((id) => id.trim())
-          .filter((id) => /^\d{5,}$/.test(id));
+        const validMemberIds = getActiveVoiceMembers(voiceChannel, channelData.ownerId).map(
+          (member) => member.id
+        );
 
-        if (userIds.length === 0) {
+        if (!validMemberIds.includes(selectedOwnerId)) {
           await interaction.reply({
-            content: "Bitte gib mindestens eine gültige User-ID ein.",
+            content: "Der ausgewählte User ist nicht mehr im Voice-Channel.",
             ephemeral: true
           });
           return;
         }
 
-        if (listAction === "add") {
-          await addToList(interaction.guild, voiceChannelId, action, userIds);
-        } else {
-          await removeFromList(interaction.guild, voiceChannelId, action, userIds);
-        }
-
+        await transferOwnership(interaction.guild, voiceChannelId, selectedOwnerId);
         await updatePanel(interaction.guild, voiceChannelId);
 
         await interaction.reply({
-          content: `${action === "whitelist" ? "Whitelist" : "Blacklist"} wurde aktualisiert.`,
+          content: `Ownership wurde an <@${selectedOwnerId}> übertragen.`,
           ephemeral: true
         });
+        return;
+      }
+
+      if (action === "whitelist_add" || action === "blacklist_add") {
+        const listName = action === "whitelist_add" ? "whitelist" : "blacklist";
+        const selectedUsers = interaction.fields.getSelectedUsers("list_users");
+        const userIds = selectedUsers ? [...selectedUsers.keys()] : [];
+
+        if (userIds.length === 0) {
+          await interaction.reply({
+            content: "Es wurden keine Mitglieder ausgewählt.",
+            ephemeral: true
+          });
+          return;
+        }
+
+        await addToList(interaction.guild, voiceChannelId, listName, userIds);
+        await updatePanel(interaction.guild, voiceChannelId);
+
+        await interaction.reply({
+          content: `${listName === "whitelist" ? "Whitelist" : "Blacklist"} wurde aktualisiert.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (action === "whitelist_remove" || action === "blacklist_remove") {
+        const listName = action === "whitelist_remove" ? "whitelist" : "blacklist";
+        const userIds = interaction.fields.getStringSelectValues("list_users");
+
+        if (!userIds || userIds.length === 0) {
+          await interaction.reply({
+            content: "Es wurden keine Mitglieder ausgewählt.",
+            ephemeral: true
+          });
+          return;
+        }
+
+        await removeFromList(interaction.guild, voiceChannelId, listName, userIds);
+        await updatePanel(interaction.guild, voiceChannelId);
+
+        await interaction.reply({
+          content: `${listName === "whitelist" ? "Whitelist" : "Blacklist"} wurde aktualisiert.`,
+          ephemeral: true
+        });
+        return;
       }
     }
   } catch (error) {

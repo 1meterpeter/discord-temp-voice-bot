@@ -25,8 +25,8 @@ function dedupeList(arr) {
 }
 
 function normalizeLists(channelData) {
-  channelData.whitelist = dedupeList(channelData.whitelist || []);
-  channelData.blacklist = dedupeList(channelData.blacklist || []);
+  channelData.whitelist = dedupeList((channelData.whitelist || []).filter(Boolean));
+  channelData.blacklist = dedupeList((channelData.blacklist || []).filter(Boolean));
 
   channelData.whitelist = channelData.whitelist.filter(
     (id) => !channelData.blacklist.includes(id)
@@ -34,6 +34,10 @@ function normalizeLists(channelData) {
 
   channelData.whitelist = channelData.whitelist.filter((id) => id !== channelData.ownerId);
   channelData.blacklist = channelData.blacklist.filter((id) => id !== channelData.ownerId);
+}
+
+function filterValidMemberIds(guild, userIds) {
+  return (userIds || []).filter((id) => guild.members.cache.has(id));
 }
 
 function getDefaultProfile(member) {
@@ -59,6 +63,13 @@ function persistOwnerProfile(guildId, channelData) {
 async function createTempChannel(member, joinChannel) {
   const guild = member.guild;
 
+  // Stellt sicher, dass möglichst viele Member im Cache sind
+  try {
+    await guild.members.fetch();
+  } catch (error) {
+    console.warn("Guild members konnten nicht vollständig geladen werden:", error.message);
+  }
+
   const savedProfile = getUserProfile(guild.id, member.id) || getDefaultProfile(member);
 
   const channelData = {
@@ -73,6 +84,10 @@ async function createTempChannel(member, joinChannel) {
   };
 
   normalizeLists(channelData);
+
+  // Nur gültige Member behalten, damit permissionOverwrites nicht crashen
+  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
+  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
 
   const voiceOverwrites = [
     {
@@ -150,6 +165,8 @@ async function updatePanel(guild, voiceChannelId) {
   if (!channelData) return;
 
   normalizeLists(channelData);
+  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
+  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
   saveTempChannel(guild.id, voiceChannelId, channelData);
 
   const voiceChannel = guild.channels.cache.get(channelData.voiceChannelId);
@@ -170,6 +187,8 @@ async function applyPermissions(guild, voiceChannelId) {
   if (!channelData) return;
 
   normalizeLists(channelData);
+  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
+  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
   saveTempChannel(guild.id, voiceChannelId, channelData);
 
   const voiceChannel = guild.channels.cache.get(channelData.voiceChannelId);
@@ -285,12 +304,12 @@ async function transferOwnership(guild, voiceChannelId, newOwnerId) {
   channelData.blacklist = (channelData.blacklist || []).filter((id) => id !== newOwnerId);
 
   normalizeLists(channelData);
+  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
+  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
   saveTempChannel(guild.id, voiceChannelId, channelData);
 
-  // Profil des neuen Owners speichern
   persistOwnerProfile(guild.id, channelData);
 
-  // Optional: altem Owner sein Profil erhalten lassen, aber ohne Ownership
   if (previousOwnerId && previousOwnerId !== newOwnerId) {
     saveUserProfile(guild.id, previousOwnerId, {
       name: channelData.name,
@@ -310,9 +329,10 @@ async function addToList(guild, voiceChannelId, listName, userIds) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
   if (!channelData) return false;
 
+  const validUserIds = filterValidMemberIds(guild, userIds);
   const otherList = listName === "whitelist" ? "blacklist" : "whitelist";
 
-  for (const userId of userIds) {
+  for (const userId of validUserIds) {
     if (userId === channelData.ownerId) continue;
 
     channelData[listName] = dedupeList([...(channelData[listName] || []), userId]);
@@ -320,6 +340,8 @@ async function addToList(guild, voiceChannelId, listName, userIds) {
   }
 
   normalizeLists(channelData);
+  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
+  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
   saveTempChannel(guild.id, voiceChannelId, channelData);
   persistOwnerProfile(guild.id, channelData);
 
@@ -338,6 +360,8 @@ async function removeFromList(guild, voiceChannelId, listName, userIds) {
   );
 
   normalizeLists(channelData);
+  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
+  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
   saveTempChannel(guild.id, voiceChannelId, channelData);
   persistOwnerProfile(guild.id, channelData);
 
