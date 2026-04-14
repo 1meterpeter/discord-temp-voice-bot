@@ -10,9 +10,7 @@ const {
 const { getTempChannel } = require("../utils/store");
 const { replyAndAutoDelete } = require("../utils/autoDelete");
 const {
-  setPrivacy,
-  renameChannel,
-  setUserLimit,
+  updateChannelSettings,
   transferOwnership,
   addToList,
   removeFromList,
@@ -235,14 +233,16 @@ module.exports = async function handleInteractionCreate(interaction) {
           return;
         }
 
-        await renameChannel(interaction.guild, voiceChannelId, newName);
-        await setUserLimit(interaction.guild, voiceChannelId, limit);
-        await setPrivacy(interaction.guild, voiceChannelId, privacy === "private");
-        await updatePanel(interaction.guild, voiceChannelId);
+        await interaction.deferReply({ ephemeral: true });
 
-        await replyAndAutoDelete(interaction, {
-          content: "Der Channel wurde aktualisiert.",
-          ephemeral: false
+        await updateChannelSettings(interaction.guild, voiceChannelId, {
+          name: newName,
+          userLimit: limit,
+          isPrivate: privacy === "private"
+        });
+
+        await interaction.editReply({
+          content: "Der Channel wurde aktualisiert."
         });
         return;
       }
@@ -262,12 +262,13 @@ module.exports = async function handleInteractionCreate(interaction) {
           return;
         }
 
+        await interaction.deferReply({ ephemeral: true });
+
         await transferOwnership(interaction.guild, voiceChannelId, selectedOwnerId);
         await updatePanel(interaction.guild, voiceChannelId);
 
-        await replyAndAutoDelete(interaction, {
-          content: `Ownership wurde an <@${selectedOwnerId}> übertragen.`,
-          ephemeral: false
+        await interaction.editReply({
+          content: `Ownership wurde an <@${selectedOwnerId}> übertragen.`
         });
         return;
       }
@@ -284,6 +285,8 @@ module.exports = async function handleInteractionCreate(interaction) {
         const addIds = desiredIds.filter((id) => !currentIds.includes(id));
         const removeIds = currentIds.filter((id) => !desiredIds.includes(id));
 
+        await interaction.deferReply({ ephemeral: true });
+
         if (addIds.length > 0) {
           await addToList(interaction.guild, voiceChannelId, listName, addIds);
         }
@@ -294,9 +297,8 @@ module.exports = async function handleInteractionCreate(interaction) {
 
         await updatePanel(interaction.guild, voiceChannelId);
 
-        await replyAndAutoDelete(interaction, {
-          content: `${listName === "whitelist" ? "Whitelist" : "Blacklist"} wurde aktualisiert.`,
-          ephemeral: false
+        await interaction.editReply({
+          content: `${listName === "whitelist" ? "Whitelist" : "Blacklist"} wurde aktualisiert.`
         });
         return;
       }
@@ -308,7 +310,14 @@ module.exports = async function handleInteractionCreate(interaction) {
       await replyAndAutoDelete(interaction, {
         content: `Es ist ein Fehler aufgetreten: ${error.message}`,
         ephemeral: false
-      });
+      }).catch(() => {});
+      return;
+    }
+
+    if (interaction.deferred && !interaction.replied) {
+      await interaction.editReply({
+        content: `Es ist ein Fehler aufgetreten: ${error.message}`
+      }).catch(() => {});
     }
   }
 };

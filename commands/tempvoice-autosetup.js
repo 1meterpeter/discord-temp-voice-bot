@@ -4,13 +4,19 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 
-const { saveGuildConfig } = require("../utils/store");
+const { addGuildSetup } = require("../utils/store");
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("tempvoice-autosetup")
     .setDescription("Erstellt automatisch Kategorie + Join-Channel für Temp-Voices.")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption((option) =>
+      option
+        .setName("setup_name")
+        .setDescription("Interner Name dieses Setups")
+        .setRequired(true)
+    )
     .addStringOption((option) =>
       option
         .setName("category_name")
@@ -36,9 +42,9 @@ module.exports = {
       return;
     }
 
+    const setupName = interaction.options.getString("setup_name", true);
     const categoryName =
-      interaction.options.getString("category_name") || "🔊 Temp Voice";
-
+      interaction.options.getString("category_name") || `🔊 ${setupName}`;
     const joinChannelName =
       interaction.options.getString("join_channel_name") || "➕ Join to Create";
 
@@ -127,14 +133,19 @@ module.exports = {
         ]
       });
 
-      saveGuildConfig(guild.id, {
+      const setup = {
+        setupId: `setup_${Date.now()}`,
+        name: setupName,
         joinToCreateChannelId: joinChannel.id,
         tempCategoryId: category.id
-      });
+      };
+
+      addGuildSetup(guild.id, setup);
 
       await interaction.reply({
         content:
           `✅ **Temp-Voice Auto-Setup erfolgreich**\n\n` +
+          `**Setup-Name:** ${setup.name}\n` +
           `**Kategorie:** ${category}\n` +
           `**Join-to-Create:** ${joinChannel}\n\n` +
           `Die Konfiguration wurde gespeichert.`,

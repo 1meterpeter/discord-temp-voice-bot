@@ -36,24 +36,41 @@ function writeStore(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
 }
 
+function migrateLegacyConfig(config) {
+  if (!config || typeof config !== "object") {
+    return { setups: [] };
+  }
+
+  if (Array.isArray(config.setups)) {
+    return config;
+  }
+
+  const migrated = { setups: [] };
+
+  if (config.joinToCreateChannelId && config.tempCategoryId) {
+    migrated.setups.push({
+      setupId: "default",
+      name: "Default Setup",
+      joinToCreateChannelId: config.joinToCreateChannelId,
+      tempCategoryId: config.tempCategoryId
+    });
+  }
+
+  return migrated;
+}
+
 function ensureGuild(store, guildId) {
   if (!store.guilds[guildId]) {
     store.guilds[guildId] = {
       config: {
-        joinToCreateChannelId: null,
-        tempCategoryId: null
+        setups: []
       },
       channels: {},
       profiles: {}
     };
   }
 
-  if (!store.guilds[guildId].config || typeof store.guilds[guildId].config !== "object") {
-    store.guilds[guildId].config = {
-      joinToCreateChannelId: null,
-      tempCategoryId: null
-    };
-  }
+  store.guilds[guildId].config = migrateLegacyConfig(store.guilds[guildId].config);
 
   if (!store.guilds[guildId].channels || typeof store.guilds[guildId].channels !== "object") {
     store.guilds[guildId].channels = {};
@@ -81,13 +98,40 @@ function saveGuildConfig(guildId, config) {
   const store = readStore();
   ensureGuild(store, guildId);
 
+  const currentConfig = migrateLegacyConfig(store.guilds[guildId].config);
+
   store.guilds[guildId].config = {
-    ...store.guilds[guildId].config,
-    ...config
+    ...currentConfig,
+    ...config,
+    setups: Array.isArray(config.setups)
+      ? config.setups
+      : currentConfig.setups
   };
 
   writeStore(store);
   return store.guilds[guildId].config;
+}
+
+function getGuildSetups(guildId) {
+  const config = getGuildConfig(guildId);
+  return config.setups || [];
+}
+
+function addGuildSetup(guildId, setup) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+
+  const setups = store.guilds[guildId].config.setups || [];
+  setups.push(setup);
+  store.guilds[guildId].config.setups = setups;
+
+  writeStore(store);
+  return setup;
+}
+
+function findGuildSetupByJoinChannel(guildId, joinChannelId) {
+  const setups = getGuildSetups(guildId);
+  return setups.find((setup) => setup.joinToCreateChannelId === joinChannelId) || null;
 }
 
 function getTempChannel(guildId, voiceChannelId) {
@@ -146,12 +190,34 @@ function deleteUserProfile(guildId, userId) {
   writeStore(store);
 }
 
+function removeGuildSetup(guildId, setupId) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+
+  const setups = store.guilds[guildId].config.setups || [];
+  const index = setups.findIndex((setup) => setup.setupId === setupId);
+
+  if (index === -1) {
+    return null;
+  }
+
+  const removed = setups[index];
+  store.guilds[guildId].config.setups.splice(index, 1);
+
+  writeStore(store);
+  return removed;
+}
+
 module.exports = {
   readStore,
   writeStore,
   getGuildData,
   getGuildConfig,
   saveGuildConfig,
+  getGuildSetups,
+  addGuildSetup,
+  removeGuildSetup,
+  findGuildSetupByJoinChannel,
   getTempChannel,
   saveTempChannel,
   deleteTempChannel,

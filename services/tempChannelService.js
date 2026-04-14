@@ -11,7 +11,7 @@ const {
   deleteTempChannel,
   getUserProfile,
   saveUserProfile,
-  getGuildConfig
+  getGuildSetups
 } = require("../utils/store");
 const {
   buildMainPanelComponents
@@ -51,22 +51,36 @@ function getDefaultProfile(member) {
   };
 }
 
-function persistOwnerProfile(guildId, channelData) {
-  saveUserProfile(guildId, channelData.ownerId, {
+function getSetupById(guildId, setupId) {
+  const setups = getGuildSetups(guildId);
+  return setups.find((setup) => setup.setupId === setupId) || null;
+}
+
+function serializeProfileFromChannel(channelData) {
+  return {
     name: channelData.name,
     userLimit: channelData.userLimit,
     isPrivate: channelData.isPrivate,
     whitelist: channelData.whitelist || [],
     blacklist: channelData.blacklist || []
-  });
+  };
 }
 
-async function createTempChannel(member, joinChannel) {
+function maybePersistProfile(channelData, guildId) {
+  if (!channelData.profileUserId) return;
+
+  saveUserProfile(
+    guildId,
+    channelData.profileUserId,
+    serializeProfileFromChannel(channelData)
+  );
+}
+
+async function createTempChannel(member, joinChannel, setup) {
   const guild = member.guild;
-  const guildConfig = getGuildConfig(guild.id);
   const botMember = guild.members.me;
 
-  if (!guildConfig?.tempCategoryId) {
+  if (!setup?.tempCategoryId) {
     throw new Error("Für diesen Server ist keine Temp-Voice-Kategorie konfiguriert.");
   }
 
@@ -74,11 +88,11 @@ async function createTempChannel(member, joinChannel) {
     throw new Error("Bot-Mitglied konnte in dieser Guild nicht gefunden werden.");
   }
 
-  const tempCategory = guild.channels.cache.get(guildConfig.tempCategoryId);
+  const tempCategory = guild.channels.cache.get(setup.tempCategoryId);
 
   if (!tempCategory) {
     throw new Error(
-      `Die konfigurierte Temp-Kategorie ${guildConfig.tempCategoryId} wurde nicht gefunden.`
+      `Die konfigurierte Temp-Kategorie ${setup.tempCategoryId} wurde nicht gefunden.`
     );
   }
 
@@ -92,6 +106,9 @@ async function createTempChannel(member, joinChannel) {
 
   const channelData = {
     ownerId: member.id,
+    originalOwnerId: member.id,
+    profileUserId: member.id,
+    setupId: setup.setupId,
     voiceChannelId: null,
     panelMessageId: null,
     name: savedProfile.name,
@@ -163,14 +180,10 @@ async function createTempChannel(member, joinChannel) {
     });
   }
 
-  console.log(
-    `[TempVoice] Erstelle Channel in Guild ${guild.id} unter Kategorie ${guildConfig.tempCategoryId}`
-  );
-
   const voiceChannel = await guild.channels.create({
     name: channelData.name,
     type: ChannelType.GuildVoice,
-    parent: guildConfig.tempCategoryId,
+    parent: setup.tempCategoryId,
     userLimit: channelData.userLimit,
     permissionOverwrites: voiceOverwrites
   });
@@ -185,14 +198,12 @@ async function createTempChannel(member, joinChannel) {
   channelData.panelMessageId = panelMessage.id;
 
   saveTempChannel(guild.id, voiceChannel.id, channelData);
-  persistOwnerProfile(guild.id, channelData);
+  maybePersistProfile(channelData, guild.id);
 
   try {
     await member.voice.setChannel(voiceChannel);
   } catch (error) {
-    console.error(
-      `[TempVoice] User konnte nicht in den neuen Temp-Channel verschoben werden.`
-    );
+    console.error("[TempVoice] User konnte nicht verschoben werden.", error);
 
     try {
       await voiceChannel.send({
@@ -201,7 +212,7 @@ async function createTempChannel(member, joinChannel) {
           "Bitte prüfe, ob ich die Berechtigung **„Mitglieder verschieben“** habe."
       });
     } catch (sendError) {
-      console.error("Konnte Fehlermeldung im Voice-Chat nicht senden:", sendError);
+      console.error("Konnte Fehlermeldung nicht senden:", sendError);
     }
 
     throw error;
@@ -307,85 +318,84 @@ async function applyPermissions(guild, voiceChannelId) {
   await voiceChannel.permissionOverwrites.set(baseOverwrites);
 }
 
-async function setPrivacy(guild, voiceChannelId, isPrivate) {
+async function updateChannelSettings(guild, voiceChannelId, updates) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
   if (!channelData) return false;
 
-  channelData.isPrivate = isPrivate;
+  const voiceChannel = guild.channels.cache.get(channelData.voiceChannelId);
+  if (!voiceChannel) return false;
+
+  const nameChanged =
+    typeof updates.name === "string" &&
+    updates.name.trim().length > 0 &&
+    `${settings.voicePrefix} ${updates.name.trim().slice(0, 90)}` !== channelData.name;
+
+  if (nameChanged) {
+    channelData.name = `${settings.voicePrefix} ${updates.name.trim().slice(0, 90)}`;
+  }
+
+  if (typeof updates.userLimit === "number") {
+    channelData.userLimit = updates.userLimit;
+  }
+
+  if (typeof updates.isPrivate === "boolean") {
+    channelData.isPrivate = updates.isPrivate;
+  }
+
+  normalizeLists(channelData);
+  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
+  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
+
+  if (nameChanged) {
+    await voiceChannel.setName(channelData.name);
+  }
+
+  if (typeof updates.userLimit === "number") {
+    await voiceChannel.setUserLimit(channelData.userLimit);
+  }
+
   saveTempChannel(guild.id, voiceChannelId, channelData);
-  persistOwnerProfile(guild.id, channelData);
+  maybePersistProfile(channelData, guild.id);
 
   await applyPermissions(guild, voiceChannelId);
   await updatePanel(guild, voiceChannelId);
+
   return true;
+}
+
+async function setPrivacy(guild, voiceChannelId, isPrivate) {
+  return updateChannelSettings(guild, voiceChannelId, { isPrivate });
 }
 
 async function renameChannel(guild, voiceChannelId, newName) {
-  const channelData = getTempChannel(guild.id, voiceChannelId);
-  if (!channelData) return false;
-
-  const voiceChannel = guild.channels.cache.get(channelData.voiceChannelId);
-  if (!voiceChannel) return false;
-
-  const cleanName = newName.trim().slice(0, 90);
-  const finalName = `${settings.voicePrefix} ${cleanName}`;
-
-  await voiceChannel.setName(finalName);
-
-  channelData.name = finalName;
-  saveTempChannel(guild.id, voiceChannelId, channelData);
-  persistOwnerProfile(guild.id, channelData);
-
-  await updatePanel(guild, voiceChannelId);
-  return true;
+  return updateChannelSettings(guild, voiceChannelId, { name: newName });
 }
 
 async function setUserLimit(guild, voiceChannelId, limit) {
-  const channelData = getTempChannel(guild.id, voiceChannelId);
-  if (!channelData) return false;
-
-  const voiceChannel = guild.channels.cache.get(channelData.voiceChannelId);
-  if (!voiceChannel) return false;
-
-  await voiceChannel.setUserLimit(limit);
-
-  channelData.userLimit = limit;
-  saveTempChannel(guild.id, voiceChannelId, channelData);
-  persistOwnerProfile(guild.id, channelData);
-
-  await updatePanel(guild, voiceChannelId);
-  return true;
+  return updateChannelSettings(guild, voiceChannelId, { userLimit: limit });
 }
 
 async function transferOwnership(guild, voiceChannelId, newOwnerId) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
   if (!channelData) return false;
 
-  const previousOwnerId = channelData.ownerId;
   channelData.ownerId = newOwnerId;
 
   channelData.whitelist = (channelData.whitelist || []).filter((id) => id !== newOwnerId);
   channelData.blacklist = (channelData.blacklist || []).filter((id) => id !== newOwnerId);
 
+  // Ab dem ersten Transfer sind Änderungen nur noch talk-lokal.
+  channelData.profileUserId = null;
+
   normalizeLists(channelData);
   channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
   channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
+
   saveTempChannel(guild.id, voiceChannelId, channelData);
-
-  persistOwnerProfile(guild.id, channelData);
-
-  if (previousOwnerId && previousOwnerId !== newOwnerId) {
-    saveUserProfile(guild.id, previousOwnerId, {
-      name: channelData.name,
-      userLimit: channelData.userLimit,
-      isPrivate: channelData.isPrivate,
-      whitelist: channelData.whitelist || [],
-      blacklist: channelData.blacklist || []
-    });
-  }
 
   await applyPermissions(guild, voiceChannelId);
   await updatePanel(guild, voiceChannelId);
+
   return true;
 }
 
@@ -406,8 +416,9 @@ async function addToList(guild, voiceChannelId, listName, userIds) {
   normalizeLists(channelData);
   channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
   channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
+
   saveTempChannel(guild.id, voiceChannelId, channelData);
-  persistOwnerProfile(guild.id, channelData);
+  maybePersistProfile(channelData, guild.id);
 
   await applyPermissions(guild, voiceChannelId);
   await updatePanel(guild, voiceChannelId);
@@ -426,8 +437,9 @@ async function removeFromList(guild, voiceChannelId, listName, userIds) {
   normalizeLists(channelData);
   channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
   channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
+
   saveTempChannel(guild.id, voiceChannelId, channelData);
-  persistOwnerProfile(guild.id, channelData);
+  maybePersistProfile(channelData, guild.id);
 
   await applyPermissions(guild, voiceChannelId);
   await updatePanel(guild, voiceChannelId);
@@ -457,12 +469,12 @@ module.exports = {
   createTempChannel,
   updatePanel,
   applyPermissions,
+  updateChannelSettings,
   setPrivacy,
   renameChannel,
   setUserLimit,
   transferOwnership,
   addToList,
   removeFromList,
-  deleteTempChannelSet,
-  persistOwnerProfile
+  deleteTempChannelSet
 };
