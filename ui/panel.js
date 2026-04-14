@@ -7,41 +7,49 @@ const {
   TextDisplayBuilder
 } = require("discord.js");
 
-function formatInlineUserList(userIds) {
+function formatCompactUserList(userIds) {
   if (!userIds || userIds.length === 0) return "—";
-  return userIds.map((id) => `<@${id}>`).join(", ");
+
+  const mentions = userIds.map((id) => `<@${id}>`);
+
+  if (mentions.length <= 3) {
+    return mentions.join(", ");
+  }
+
+  const preview = mentions.slice(0, 2).join(", ");
+  const rest = mentions.length - 2;
+  return `${preview}, +${rest}`;
 }
 
 function buildMainPanelComponents(channelData) {
   const title = new TextDisplayBuilder().setContent("## 🎛️ Temp Voice Panel");
 
-  const subtitle = new TextDisplayBuilder().setContent(
-    "*Verwalte deinen temporären Voice-Channel über die Optionen unten.*"
-  );
-
   const ownerBlock = new TextDisplayBuilder().setContent(
-    `### 👑 Owner\n<@${channelData.ownerId}>`
+    [
+      "### 👑 Owner",
+      `<@${channelData.ownerId}>`
+    ].join("\n")
   );
 
   const settingsBlock = new TextDisplayBuilder().setContent(
     [
-      "### ⚙️ Einstellungen",
-      `**Privacy:** ${channelData.isPrivate ? "Private" : "Open"}`,
-      `**Limit:** ${channelData.userLimit === 0 ? "Unbegrenzt" : channelData.userLimit}`
+      "### ⚙️ Settings",
+      `**Privacy:** ${channelData.isPrivate ? "🔒 Private" : "🌐 Open"}`,
+      `**Limit:** 👥 ${channelData.userLimit === 0 ? "Unbegrenzt" : channelData.userLimit}`
     ].join("\n")
   );
 
   const whitelistBlock = new TextDisplayBuilder().setContent(
     [
       "### ✅ Whitelist",
-      formatInlineUserList(channelData.whitelist)
+      `${formatCompactUserList(channelData.whitelist)}`
     ].join("\n")
   );
 
   const blacklistBlock = new TextDisplayBuilder().setContent(
     [
       "### ⛔ Blacklist",
-      formatInlineUserList(channelData.blacklist)
+      `${formatCompactUserList(channelData.blacklist)}`
     ].join("\n")
   );
 
@@ -73,7 +81,6 @@ function buildMainPanelComponents(channelData) {
     .setAccentColor(0x5865f2)
     .addTextDisplayComponents(
       title,
-      subtitle,
       ownerBlock,
       settingsBlock,
       whitelistBlock,

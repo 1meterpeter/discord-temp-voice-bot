@@ -11,6 +11,7 @@ const {
 } = require("discord.js");
 
 const { getTempChannel } = require("../utils/store");
+const { replyAndAutoDelete } = require("../utils/autoDelete");
 const {
   setPrivacy,
   renameChannel,
@@ -175,33 +176,32 @@ function buildListRemoveModal(voiceChannelId, type, guild, listedUserIds) {
 
 module.exports = async function handleInteractionCreate(interaction) {
   try {
-    // Button-Klicks
     if (interaction.isButton()) {
       const [prefix, action, voiceChannelId] = interaction.customId.split(":");
       if (prefix !== "tempvc") return;
 
       const channelData = getTempChannel(interaction.guild.id, voiceChannelId);
       if (!channelData) {
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: "Dieser Temp-Channel existiert nicht mehr.",
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
 
       if (!isManager(interaction, channelData)) {
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: "Nur der aktuelle Owner darf dieses Panel benutzen.",
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
 
       const voiceChannel = interaction.guild.channels.cache.get(voiceChannelId);
       if (!voiceChannel) {
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: "Der Voice-Channel wurde nicht gefunden.",
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
@@ -215,9 +215,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         const membersInVoice = getActiveVoiceMembers(voiceChannel, channelData.ownerId);
 
         if (membersInVoice.length === 0) {
-          await interaction.reply({
+          await replyAndAutoDelete(interaction, {
             content: "Der Owner kann aktuell nicht gewechselt werden, weil niemand anderes im Voice-Channel ist.",
-            ephemeral: true
+            ephemeral: false
           });
           return;
         }
@@ -255,9 +255,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         );
 
         if (!removeModal) {
-          await interaction.reply({
+          await replyAndAutoDelete(interaction, {
             content: "Die Whitelist ist aktuell leer.",
-            ephemeral: true
+            ephemeral: false
           });
           return;
         }
@@ -275,9 +275,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         );
 
         if (!removeModal) {
-          await interaction.reply({
+          await replyAndAutoDelete(interaction, {
             content: "Die Blacklist ist aktuell leer.",
-            ephemeral: true
+            ephemeral: false
           });
           return;
         }
@@ -287,7 +287,6 @@ module.exports = async function handleInteractionCreate(interaction) {
       }
     }
 
-    // Modal-Submits
     if (interaction.isModalSubmit()) {
       const parts = interaction.customId.split(":");
       const prefix = parts[0];
@@ -298,26 +297,26 @@ module.exports = async function handleInteractionCreate(interaction) {
 
       const channelData = getTempChannel(interaction.guild.id, voiceChannelId);
       if (!channelData) {
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: "Dieser Temp-Channel existiert nicht mehr.",
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
 
       if (!isManager(interaction, channelData)) {
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: "Nur der aktuelle Owner darf dieses Panel benutzen.",
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
 
       const voiceChannel = interaction.guild.channels.cache.get(voiceChannelId);
       if (!voiceChannel) {
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: "Der Voice-Channel wurde nicht gefunden.",
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
@@ -329,9 +328,9 @@ module.exports = async function handleInteractionCreate(interaction) {
 
         const limit = Number(rawLimit);
         if (!Number.isInteger(limit) || limit < 0 || limit > 99) {
-          await interaction.reply({
+          await replyAndAutoDelete(interaction, {
             content: "Bitte gib eine ganze Zahl zwischen 0 und 99 ein.",
-            ephemeral: true
+            ephemeral: false
           });
           return;
         }
@@ -341,9 +340,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         await setPrivacy(interaction.guild, voiceChannelId, privacy === "private");
         await updatePanel(interaction.guild, voiceChannelId);
 
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: "Der Channel wurde aktualisiert.",
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
@@ -356,9 +355,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         );
 
         if (!validMemberIds.includes(selectedOwnerId)) {
-          await interaction.reply({
+          await replyAndAutoDelete(interaction, {
             content: "Der ausgewählte User ist nicht mehr im Voice-Channel.",
-            ephemeral: true
+            ephemeral: false
           });
           return;
         }
@@ -366,9 +365,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         await transferOwnership(interaction.guild, voiceChannelId, selectedOwnerId);
         await updatePanel(interaction.guild, voiceChannelId);
 
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: `Ownership wurde an <@${selectedOwnerId}> übertragen.`,
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
@@ -379,9 +378,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         const userIds = selectedUsers ? [...selectedUsers.keys()] : [];
 
         if (userIds.length === 0) {
-          await interaction.reply({
+          await replyAndAutoDelete(interaction, {
             content: "Es wurden keine Mitglieder ausgewählt.",
-            ephemeral: true
+            ephemeral: false
           });
           return;
         }
@@ -389,9 +388,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         await addToList(interaction.guild, voiceChannelId, listName, userIds);
         await updatePanel(interaction.guild, voiceChannelId);
 
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: `${listName === "whitelist" ? "Whitelist" : "Blacklist"} wurde aktualisiert.`,
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
@@ -401,9 +400,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         const userIds = interaction.fields.getStringSelectValues("list_users");
 
         if (!userIds || userIds.length === 0) {
-          await interaction.reply({
+          await replyAndAutoDelete(interaction, {
             content: "Es wurden keine Mitglieder ausgewählt.",
-            ephemeral: true
+            ephemeral: false
           });
           return;
         }
@@ -411,9 +410,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         await removeFromList(interaction.guild, voiceChannelId, listName, userIds);
         await updatePanel(interaction.guild, voiceChannelId);
 
-        await interaction.reply({
+        await replyAndAutoDelete(interaction, {
           content: `${listName === "whitelist" ? "Whitelist" : "Blacklist"} wurde aktualisiert.`,
-          ephemeral: true
+          ephemeral: false
         });
         return;
       }
@@ -422,10 +421,10 @@ module.exports = async function handleInteractionCreate(interaction) {
     console.error("Fehler bei InteractionCreate:", error);
 
     if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-      await interaction.reply({
+      await replyAndAutoDelete(interaction, {
         content: `Es ist ein Fehler aufgetreten: ${error.message}`,
-        ephemeral: true
-      }).catch(() => {});
+        ephemeral: false
+      });
     }
   }
 };
