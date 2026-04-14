@@ -10,7 +10,8 @@ const {
   getTempChannel,
   deleteTempChannel,
   getUserProfile,
-  saveUserProfile
+  saveUserProfile,
+  getGuildConfig
 } = require("../utils/store");
 const {
   buildMainPanelComponents
@@ -62,8 +63,25 @@ function persistOwnerProfile(guildId, channelData) {
 
 async function createTempChannel(member, joinChannel) {
   const guild = member.guild;
+  const guildConfig = getGuildConfig(guild.id);
+  const botMember = guild.members.me;
 
-  // Stellt sicher, dass möglichst viele Member im Cache sind
+  if (!guildConfig?.tempCategoryId) {
+    throw new Error("Für diesen Server ist keine Temp-Voice-Kategorie konfiguriert.");
+  }
+
+  if (!botMember) {
+    throw new Error("Bot-Mitglied konnte in dieser Guild nicht gefunden werden.");
+  }
+
+  const tempCategory = guild.channels.cache.get(guildConfig.tempCategoryId);
+
+  if (!tempCategory) {
+    throw new Error(
+      `Die konfigurierte Temp-Kategorie ${guildConfig.tempCategoryId} wurde nicht gefunden.`
+    );
+  }
+
   try {
     await guild.members.fetch();
   } catch (error) {
@@ -85,7 +103,6 @@ async function createTempChannel(member, joinChannel) {
 
   normalizeLists(channelData);
 
-  // Nur gültige Member behalten, damit permissionOverwrites nicht crashen
   channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
   channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
 
@@ -99,6 +116,17 @@ async function createTempChannel(member, joinChannel) {
         ...(channelData.isPrivate ? [] : [PermissionFlagsBits.Connect])
       ],
       deny: channelData.isPrivate ? [PermissionFlagsBits.Connect] : []
+    },
+    {
+      id: botMember.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.Connect,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.MoveMembers,
+        PermissionFlagsBits.ManageChannels
+      ]
     },
     {
       id: member.id,
@@ -135,10 +163,14 @@ async function createTempChannel(member, joinChannel) {
     });
   }
 
+  console.log(
+    `[TempVoice] Erstelle Channel in Guild ${guild.id} unter Kategorie ${guildConfig.tempCategoryId}`
+  );
+
   const voiceChannel = await guild.channels.create({
     name: channelData.name,
     type: ChannelType.GuildVoice,
-    parent: process.env.TEMP_CATEGORY_ID || joinChannel.parentId || null,
+    parent: guildConfig.tempCategoryId,
     userLimit: channelData.userLimit,
     permissionOverwrites: voiceOverwrites
   });
@@ -155,7 +187,25 @@ async function createTempChannel(member, joinChannel) {
   saveTempChannel(guild.id, voiceChannel.id, channelData);
   persistOwnerProfile(guild.id, channelData);
 
-  await member.voice.setChannel(voiceChannel);
+  try {
+    await member.voice.setChannel(voiceChannel);
+  } catch (error) {
+    console.error(
+      `[TempVoice] User konnte nicht in den neuen Temp-Channel verschoben werden.`
+    );
+
+    try {
+      await voiceChannel.send({
+        content:
+          "❌ Ich konnte dich nicht in den neuen Temp-Channel verschieben.\n" +
+          "Bitte prüfe, ob ich die Berechtigung **„Mitglieder verschieben“** habe."
+      });
+    } catch (sendError) {
+      console.error("Konnte Fehlermeldung im Voice-Chat nicht senden:", sendError);
+    }
+
+    throw error;
+  }
 
   return channelData;
 }
@@ -186,6 +236,9 @@ async function applyPermissions(guild, voiceChannelId) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
   if (!channelData) return;
 
+  const botMember = guild.members.me;
+  if (!botMember) return;
+
   normalizeLists(channelData);
   channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
   channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
@@ -204,6 +257,17 @@ async function applyPermissions(guild, voiceChannelId) {
         ...(channelData.isPrivate ? [] : [PermissionFlagsBits.Connect])
       ],
       deny: channelData.isPrivate ? [PermissionFlagsBits.Connect] : []
+    },
+    {
+      id: botMember.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.Connect,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.MoveMembers,
+        PermissionFlagsBits.ManageChannels
+      ]
     },
     {
       id: channelData.ownerId,
@@ -368,7 +432,7 @@ async function removeFromList(guild, voiceChannelId, listName, userIds) {
   await applyPermissions(guild, voiceChannelId);
   await updatePanel(guild, voiceChannelId);
 
-  return channelData;
+  return true;
 }
 
 async function deleteTempChannelSet(guild, voiceChannelId) {

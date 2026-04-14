@@ -39,8 +39,19 @@ function writeStore(data) {
 function ensureGuild(store, guildId) {
   if (!store.guilds[guildId]) {
     store.guilds[guildId] = {
+      config: {
+        joinToCreateChannelId: null,
+        tempCategoryId: null
+      },
       channels: {},
       profiles: {}
+    };
+  }
+
+  if (!store.guilds[guildId].config || typeof store.guilds[guildId].config !== "object") {
+    store.guilds[guildId].config = {
+      joinToCreateChannelId: null,
+      tempCategoryId: null
     };
   }
 
@@ -58,6 +69,25 @@ function getGuildData(guildId) {
   ensureGuild(store, guildId);
   writeStore(store);
   return store.guilds[guildId];
+}
+
+function getGuildConfig(guildId) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+  return store.guilds[guildId].config;
+}
+
+function saveGuildConfig(guildId, config) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+
+  store.guilds[guildId].config = {
+    ...store.guilds[guildId].config,
+    ...config
+  };
+
+  writeStore(store);
+  return store.guilds[guildId].config;
 }
 
 function getTempChannel(guildId, voiceChannelId) {
@@ -120,6 +150,8 @@ module.exports = {
   readStore,
   writeStore,
   getGuildData,
+  getGuildConfig,
+  saveGuildConfig,
   getTempChannel,
   saveTempChannel,
   deleteTempChannel,

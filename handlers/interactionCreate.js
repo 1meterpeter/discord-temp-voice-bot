@@ -4,10 +4,7 @@ const {
   TextInputStyle,
   StringSelectMenuBuilder,
   LabelBuilder,
-  UserSelectMenuBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle
+  UserSelectMenuBuilder
 } = require("discord.js");
 
 const { getTempChannel } = require("../utils/store");
@@ -31,6 +28,10 @@ function getActiveVoiceMembers(voiceChannel, ownerId = null) {
   return [...voiceChannel.members.values()].filter(
     (member) => !member.user.bot && member.id !== ownerId
   );
+}
+
+function sanitizeExistingList(channelData, listName) {
+  return (channelData[listName] || []).filter((id) => id && id !== channelData.ownerId);
 }
 
 function buildEditModal(voiceChannelId, channelData) {
@@ -98,79 +99,27 @@ function buildOwnerModal(voiceChannelId, members) {
     );
 }
 
-function buildListChoiceMessage(listType, voiceChannelId) {
-  const title = listType === "whitelist" ? "Whitelist" : "Blacklist";
+function buildListModal(voiceChannelId, listName, channelData) {
+  const existing = sanitizeExistingList(channelData, listName).slice(0, 25);
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`tempvc:${listType}_add:${voiceChannelId}`)
-      .setLabel("Add")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`tempvc:${listType}_remove:${voiceChannelId}`)
-      .setLabel("Remove")
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  return {
-    content: `${title} verwalten:`,
-    components: [row],
-    ephemeral: true
-  };
-}
-
-function buildListAddModal(voiceChannelId, type) {
   const userSelect = new UserSelectMenuBuilder()
     .setCustomId("list_users")
-    .setPlaceholder("Mitglieder auswählen")
-    .setMinValues(1)
-    .setMaxValues(10);
+    .setPlaceholder("Mitglieder auswählen oder abwählen")
+    .setMinValues(0)
+    .setMaxValues(25)
+    .setRequired(false);
+
+  if (existing.length > 0) {
+    userSelect.setDefaultUsers(existing);
+  }
 
   return new ModalBuilder()
-    .setCustomId(`tempvc_modal:${type}_add:${voiceChannelId}`)
-    .setTitle(type === "whitelist" ? "Add to Whitelist" : "Add to Blacklist")
+    .setCustomId(`tempvc_modal:${listName}:${voiceChannelId}`)
+    .setTitle(listName === "whitelist" ? "Manage Whitelist" : "Manage Blacklist")
     .addLabelComponents(
       new LabelBuilder()
         .setLabel("Server Members")
         .setUserSelectMenuComponent(userSelect)
-    );
-}
-
-function buildListRemoveModal(voiceChannelId, type, guild, listedUserIds) {
-  const validIds = (listedUserIds || []).filter((id) => guild.members.cache.has(id));
-
-  if (validIds.length === 0) {
-    return null;
-  }
-
-  const options = validIds.slice(0, 25).map((userId) => {
-    const member = guild.members.cache.get(userId);
-    const label =
-      member?.displayName?.slice(0, 100) ||
-      member?.user?.username?.slice(0, 100) ||
-      `User ${userId}`.slice(0, 100);
-
-    return {
-      label,
-      value: userId,
-      description: "Bereits auf der Liste"
-    };
-  });
-
-  const removeSelect = new StringSelectMenuBuilder()
-    .setCustomId("list_users")
-    .setPlaceholder("Mitglieder auswählen")
-    .setMinValues(1)
-    .setMaxValues(Math.min(options.length, 10))
-    .addOptions(options);
-
-  return new ModalBuilder()
-    .setCustomId(`tempvc_modal:${type}_remove:${voiceChannelId}`)
-    .setTitle(type === "whitelist" ? "Remove from Whitelist" : "Remove from Blacklist")
-    .addLabelComponents(
-      new LabelBuilder()
-        .setLabel("Listed Members")
-        .setStringSelectMenuComponent(removeSelect)
     );
 }
 
@@ -216,7 +165,8 @@ module.exports = async function handleInteractionCreate(interaction) {
 
         if (membersInVoice.length === 0) {
           await replyAndAutoDelete(interaction, {
-            content: "Der Owner kann aktuell nicht gewechselt werden, weil niemand anderes im Voice-Channel ist.",
+            content:
+              "Der Owner kann aktuell nicht gewechselt werden, weil niemand anderes im Voice-Channel ist.",
             ephemeral: false
           });
           return;
@@ -227,62 +177,12 @@ module.exports = async function handleInteractionCreate(interaction) {
       }
 
       if (action === "whitelist") {
-        await interaction.reply(buildListChoiceMessage("whitelist", voiceChannelId));
+        await interaction.showModal(buildListModal(voiceChannelId, "whitelist", channelData));
         return;
       }
 
       if (action === "blacklist") {
-        await interaction.reply(buildListChoiceMessage("blacklist", voiceChannelId));
-        return;
-      }
-
-      if (action === "whitelist_add") {
-        await interaction.showModal(buildListAddModal(voiceChannelId, "whitelist"));
-        return;
-      }
-
-      if (action === "blacklist_add") {
-        await interaction.showModal(buildListAddModal(voiceChannelId, "blacklist"));
-        return;
-      }
-
-      if (action === "whitelist_remove") {
-        const removeModal = buildListRemoveModal(
-          voiceChannelId,
-          "whitelist",
-          interaction.guild,
-          channelData.whitelist || []
-        );
-
-        if (!removeModal) {
-          await replyAndAutoDelete(interaction, {
-            content: "Die Whitelist ist aktuell leer.",
-            ephemeral: false
-          });
-          return;
-        }
-
-        await interaction.showModal(removeModal);
-        return;
-      }
-
-      if (action === "blacklist_remove") {
-        const removeModal = buildListRemoveModal(
-          voiceChannelId,
-          "blacklist",
-          interaction.guild,
-          channelData.blacklist || []
-        );
-
-        if (!removeModal) {
-          await replyAndAutoDelete(interaction, {
-            content: "Die Blacklist ist aktuell leer.",
-            ephemeral: false
-          });
-          return;
-        }
-
-        await interaction.showModal(removeModal);
+        await interaction.showModal(buildListModal(voiceChannelId, "blacklist", channelData));
         return;
       }
     }
@@ -372,42 +272,26 @@ module.exports = async function handleInteractionCreate(interaction) {
         return;
       }
 
-      if (action === "whitelist_add" || action === "blacklist_add") {
-        const listName = action === "whitelist_add" ? "whitelist" : "blacklist";
+      if (action === "whitelist" || action === "blacklist") {
+        const listName = action;
+        const currentIds = sanitizeExistingList(channelData, listName);
+
         const selectedUsers = interaction.fields.getSelectedUsers("list_users");
-        const userIds = selectedUsers ? [...selectedUsers.keys()] : [];
+        const selectedIds = selectedUsers ? [...selectedUsers.keys()] : [];
 
-        if (userIds.length === 0) {
-          await replyAndAutoDelete(interaction, {
-            content: "Es wurden keine Mitglieder ausgewählt.",
-            ephemeral: false
-          });
-          return;
+        const desiredIds = [...new Set(selectedIds.filter((id) => id !== channelData.ownerId))];
+
+        const addIds = desiredIds.filter((id) => !currentIds.includes(id));
+        const removeIds = currentIds.filter((id) => !desiredIds.includes(id));
+
+        if (addIds.length > 0) {
+          await addToList(interaction.guild, voiceChannelId, listName, addIds);
         }
 
-        await addToList(interaction.guild, voiceChannelId, listName, userIds);
-        await updatePanel(interaction.guild, voiceChannelId);
-
-        await replyAndAutoDelete(interaction, {
-          content: `${listName === "whitelist" ? "Whitelist" : "Blacklist"} wurde aktualisiert.`,
-          ephemeral: false
-        });
-        return;
-      }
-
-      if (action === "whitelist_remove" || action === "blacklist_remove") {
-        const listName = action === "whitelist_remove" ? "whitelist" : "blacklist";
-        const userIds = interaction.fields.getStringSelectValues("list_users");
-
-        if (!userIds || userIds.length === 0) {
-          await replyAndAutoDelete(interaction, {
-            content: "Es wurden keine Mitglieder ausgewählt.",
-            ephemeral: false
-          });
-          return;
+        if (removeIds.length > 0) {
+          await removeFromList(interaction.guild, voiceChannelId, listName, removeIds);
         }
 
-        await removeFromList(interaction.guild, voiceChannelId, listName, userIds);
         await updatePanel(interaction.guild, voiceChannelId);
 
         await replyAndAutoDelete(interaction, {
