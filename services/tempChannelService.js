@@ -349,7 +349,7 @@ async function createTempChannel(member, joinChannel, setup) {
   channelData.voiceChannelId = voiceChannel.id;
 
   const panelMessage = await voiceChannel.send({
-    flags: MessageFlags.IsComponentsV2,
+    flags: MessageFlags.IsComponentsV2 | MessageFlags.SuppressNotifications,
     components: buildMainPanelComponents(channelData)
   });
 
@@ -367,7 +367,8 @@ async function createTempChannel(member, joinChannel, setup) {
       await voiceChannel.send({
         content:
           "❌ Ich konnte dich nicht in den neuen Temp-Channel verschieben.\n" +
-          "Bitte prüfe, ob ich die Berechtigung **„Mitglieder verschieben“** habe."
+          "Bitte prüfe, ob ich die Berechtigung **„Mitglieder verschieben“** habe.",
+        flags: MessageFlags.SuppressNotifications
       });
     } catch (sendError) {
       console.error("Konnte Fehlermeldung im Voice-Chat nicht senden:", sendError);
