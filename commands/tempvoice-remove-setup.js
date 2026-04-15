@@ -8,6 +8,9 @@ const {
   removeGuildSetup
 } = require("../utils/store");
 
+/**
+ * Entfernt ein gespeichertes Setup.
+ */
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("tempvoice-remove-setup")
@@ -23,7 +26,7 @@ module.exports = {
     .addBooleanOption((option) =>
       option
         .setName("delete_channels")
-        .setDescription("Löscht auch Join-Channel und Kategorie, falls vorhanden")
+        .setDescription("Löscht auch den Join-Channel und die Source-Kategorie")
         .setRequired(false)
     ),
 
@@ -63,7 +66,7 @@ module.exports = {
     }
 
     let deletedJoinChannel = false;
-    let deletedCategory = false;
+    let deletedSourceCategory = false;
     const errors = [];
 
     if (deleteChannels) {
@@ -81,17 +84,17 @@ module.exports = {
         }
       }
 
-      const category = interaction.guild.channels.cache.get(
-        targetSetup.tempCategoryId
+      const sourceCategory = interaction.guild.channels.cache.get(
+        targetSetup.sourceCategoryId
       );
 
-      if (category) {
+      if (sourceCategory) {
         try {
-          await category.delete("Temp-Voice-Setup wurde entfernt");
-          deletedCategory = true;
+          await sourceCategory.delete("Temp-Voice-Setup wurde entfernt");
+          deletedSourceCategory = true;
         } catch (error) {
-          console.error("Fehler beim Löschen der Kategorie:", error);
-          errors.push("Kategorie konnte nicht gelöscht werden");
+          console.error("Fehler beim Löschen der Source-Kategorie:", error);
+          errors.push("Source-Kategorie konnte nicht gelöscht werden");
         }
       }
     }
@@ -117,7 +120,7 @@ module.exports = {
       lines.push(
         ``,
         `**Join-Channel gelöscht:** ${deletedJoinChannel ? "Ja" : "Nein"}`,
-        `**Kategorie gelöscht:** ${deletedCategory ? "Ja" : "Nein"}`
+        `**Source-Kategorie gelöscht:** ${deletedSourceCategory ? "Ja" : "Nein"}`
       );
     }
 

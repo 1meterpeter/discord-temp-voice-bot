@@ -17,21 +17,34 @@ const {
   updatePanel
 } = require("../services/tempChannelService");
 
+/**
+ * Prüft, ob der aktuelle User den Talk verwalten darf.
+ * Aktuell: nur der Owner.
+ */
 function isManager(interaction, channelData) {
   if (!interaction.member) return false;
   return interaction.user.id === channelData.ownerId;
 }
 
+/**
+ * Liste aktiver User im Voice (ohne Owner und ohne Bots).
+ */
 function getActiveVoiceMembers(voiceChannel, ownerId = null) {
   return [...voiceChannel.members.values()].filter(
     (member) => !member.user.bot && member.id !== ownerId
   );
 }
 
+/**
+ * Entfernt Owner aus White-/Blacklist-Anzeige.
+ */
 function sanitizeExistingList(channelData, listName) {
   return (channelData[listName] || []).filter((id) => id && id !== channelData.ownerId);
 }
 
+/**
+ * Modal für Name / Limit / Privacy.
+ */
 function buildEditModal(voiceChannelId, channelData) {
   const nameInput = new TextInputBuilder()
     .setCustomId("channel_name")
@@ -73,6 +86,9 @@ function buildEditModal(voiceChannelId, channelData) {
     );
 }
 
+/**
+ * Modal für Owner-Wechsel.
+ */
 function buildOwnerModal(voiceChannelId, members) {
   const options = members.slice(0, 25).map((member) => ({
     label: member.displayName.slice(0, 100),
@@ -97,6 +113,10 @@ function buildOwnerModal(voiceChannelId, members) {
     );
 }
 
+/**
+ * Ein einziges Modal für White-/Blacklist.
+ * Bereits ausgewählte User sind vorausgewählt.
+ */
 function buildListModal(voiceChannelId, listName, channelData) {
   const existing = sanitizeExistingList(channelData, listName).slice(0, 25);
 
@@ -123,6 +143,9 @@ function buildListModal(voiceChannelId, listName, channelData) {
 
 module.exports = async function handleInteractionCreate(interaction) {
   try {
+    /**
+     * Button-Klicks im Panel.
+     */
     if (interaction.isButton()) {
       const [prefix, action, voiceChannelId] = interaction.customId.split(":");
       if (prefix !== "tempvc") return;
@@ -185,6 +208,9 @@ module.exports = async function handleInteractionCreate(interaction) {
       }
     }
 
+    /**
+     * Modal wurde abgesendet.
+     */
     if (interaction.isModalSubmit()) {
       const parts = interaction.customId.split(":");
       const prefix = parts[0];
@@ -219,6 +245,11 @@ module.exports = async function handleInteractionCreate(interaction) {
         return;
       }
 
+      /**
+       * Edit-Modal:
+       * Alle Änderungen in einem einzigen Update.
+       * Das reduziert Fehlermeldungen / Mehrfach-Updates deutlich.
+       */
       if (action === "edit") {
         const newName = interaction.fields.getTextInputValue("channel_name").trim();
         const rawLimit = interaction.fields.getTextInputValue("channel_limit").trim();
@@ -247,6 +278,9 @@ module.exports = async function handleInteractionCreate(interaction) {
         return;
       }
 
+      /**
+       * Owner-Wechsel.
+       */
       if (action === "owner") {
         const selectedOwnerId = interaction.fields.getStringSelectValues("new_owner")[0];
 
@@ -273,6 +307,10 @@ module.exports = async function handleInteractionCreate(interaction) {
         return;
       }
 
+      /**
+       * White-/Blacklist:
+       * Vergleich zwischen alter Liste und neuer Auswahl.
+       */
       if (action === "whitelist" || action === "blacklist") {
         const listName = action;
         const currentIds = sanitizeExistingList(channelData, listName);

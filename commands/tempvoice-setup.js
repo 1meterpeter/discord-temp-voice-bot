@@ -6,6 +6,14 @@ const {
 
 const { addGuildSetup } = require("../utils/store");
 
+/**
+ * Manuelles Setup:
+ * - join_channel = der Create-Talk Channel
+ * - open_category = Talks Open
+ * - closed_category = Talks Closed
+ *
+ * Die Source-Category wird automatisch aus der Parent-Kategorie des Join-Channels abgeleitet.
+ */
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("tempvoice-setup")
@@ -25,8 +33,15 @@ module.exports = {
     )
     .addChannelOption((option) =>
       option
-        .setName("category")
-        .setDescription("Kategorie, in der neue Temp-Voices erstellt werden")
+        .setName("open_category")
+        .setDescription("Kategorie, in der offene Talks abgelegt werden")
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true)
+    )
+    .addChannelOption((option) =>
+      option
+        .setName("closed_category")
+        .setDescription("Kategorie, in die volle Talks verschoben werden")
         .addChannelTypes(ChannelType.GuildCategory)
         .setRequired(true)
     )
@@ -35,13 +50,28 @@ module.exports = {
   async execute(interaction) {
     const setupName = interaction.options.getString("setup_name", true);
     const joinChannel = interaction.options.getChannel("join_channel", true);
-    const category = interaction.options.getChannel("category", true);
+    const openCategory = interaction.options.getChannel("open_category", true);
+    const closedCategory = interaction.options.getChannel("closed_category", true);
+
+    const sourceCategoryId = joinChannel.parentId;
+
+    if (!sourceCategoryId) {
+      await interaction.reply({
+        content:
+          "❌ Der gewählte Join-Channel liegt in keiner Kategorie. " +
+          "Bitte verwende einen Channel, der in einer Quell-Kategorie liegt.",
+        ephemeral: true
+      });
+      return;
+    }
 
     const setup = {
       setupId: `setup_${Date.now()}`,
       name: setupName,
       joinToCreateChannelId: joinChannel.id,
-      tempCategoryId: category.id
+      sourceCategoryId,
+      openCategoryId: openCategory.id,
+      closedCategoryId: closedCategory.id
     };
 
     addGuildSetup(interaction.guild.id, setup);
@@ -51,7 +81,9 @@ module.exports = {
         `✅ Temp-Voice Setup gespeichert.\n\n` +
         `**Name:** ${setup.name}\n` +
         `**Join-to-Create:** ${joinChannel}\n` +
-        `**Kategorie:** ${category}`,
+        `**Source-Rechte von:** <#${sourceCategoryId}>\n` +
+        `**Talks Open:** ${openCategory}\n` +
+        `**Talks Closed:** ${closedCategory}`,
       ephemeral: true
     });
   }

@@ -5,6 +5,9 @@ const {
 
 const { getGuildSetups } = require("../utils/store");
 
+/**
+ * Zeigt alle Setups der Guild an.
+ */
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("tempvoice-config")
@@ -27,7 +30,9 @@ module.exports = {
         `**${index + 1}. ${setup.name}**`,
         `Setup-ID: \`${setup.setupId}\``,
         `Join-to-Create: <#${setup.joinToCreateChannelId}>`,
-        `Kategorie: <#${setup.tempCategoryId}>`
+        `Source-Rechte von: ${setup.sourceCategoryId ? `<#${setup.sourceCategoryId}>` : "—"}`,
+        `Talks Open: <#${setup.openCategoryId}>`,
+        `Talks Closed: <#${setup.closedCategoryId}>`
       ].join("\n");
     });
 

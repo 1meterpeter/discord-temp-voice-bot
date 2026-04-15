@@ -1,8 +1,15 @@
 const fs = require("fs");
 const path = require("path");
 
+/**
+ * Zentrale JSON-Datei für persistente Bot-Daten.
+ * Durch dein Volume auf JustRunMyApp bleibt diese Datei auch nach Neustarts erhalten.
+ */
 const DATA_FILE = path.join(__dirname, "..", "data", "tempChannels.json");
 
+/**
+ * Erstellt die JSON-Datei beim ersten Start, falls sie noch nicht existiert.
+ */
 function ensureDataFile() {
   if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(
@@ -13,6 +20,9 @@ function ensureDataFile() {
   }
 }
 
+/**
+ * Liest den kompletten Store aus der JSON-Datei.
+ */
 function readStore() {
   ensureDataFile();
 
@@ -31,11 +41,17 @@ function readStore() {
   }
 }
 
+/**
+ * Schreibt den kompletten Store zurück in die JSON-Datei.
+ */
 function writeStore(data) {
   ensureDataFile();
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
 }
 
+/**
+ * Migriert alte Configs auf die neue Struktur.
+ */
 function migrateLegacyConfig(config) {
   if (!config || typeof config !== "object") {
     return { setups: [] };
@@ -52,13 +68,18 @@ function migrateLegacyConfig(config) {
       setupId: "default",
       name: "Default Setup",
       joinToCreateChannelId: config.joinToCreateChannelId,
-      tempCategoryId: config.tempCategoryId
+      sourceCategoryId: null,
+      openCategoryId: config.tempCategoryId,
+      closedCategoryId: config.tempCategoryId
     });
   }
 
   return migrated;
 }
 
+/**
+ * Stellt sicher, dass eine Guild-Struktur im Store existiert.
+ */
 function ensureGuild(store, guildId) {
   if (!store.guilds[guildId]) {
     store.guilds[guildId] = {
@@ -81,6 +102,9 @@ function ensureGuild(store, guildId) {
   }
 }
 
+/**
+ * Gibt die komplette Guild-Struktur zurück.
+ */
 function getGuildData(guildId) {
   const store = readStore();
   ensureGuild(store, guildId);
@@ -88,12 +112,18 @@ function getGuildData(guildId) {
   return store.guilds[guildId];
 }
 
+/**
+ * Gibt nur die Config einer Guild zurück.
+ */
 function getGuildConfig(guildId) {
   const store = readStore();
   ensureGuild(store, guildId);
   return store.guilds[guildId].config;
 }
 
+/**
+ * Speichert eine komplette Guild-Config.
+ */
 function saveGuildConfig(guildId, config) {
   const store = readStore();
   ensureGuild(store, guildId);
@@ -112,11 +142,17 @@ function saveGuildConfig(guildId, config) {
   return store.guilds[guildId].config;
 }
 
+/**
+ * Gibt alle Setups einer Guild zurück.
+ */
 function getGuildSetups(guildId) {
   const config = getGuildConfig(guildId);
   return config.setups || [];
 }
 
+/**
+ * Fügt ein neues Setup hinzu.
+ */
 function addGuildSetup(guildId, setup) {
   const store = readStore();
   ensureGuild(store, guildId);
@@ -129,67 +165,9 @@ function addGuildSetup(guildId, setup) {
   return setup;
 }
 
-function findGuildSetupByJoinChannel(guildId, joinChannelId) {
-  const setups = getGuildSetups(guildId);
-  return setups.find((setup) => setup.joinToCreateChannelId === joinChannelId) || null;
-}
-
-function getTempChannel(guildId, voiceChannelId) {
-  const store = readStore();
-  ensureGuild(store, guildId);
-  return store.guilds[guildId].channels[voiceChannelId] || null;
-}
-
-function saveTempChannel(guildId, voiceChannelId, data) {
-  const store = readStore();
-  ensureGuild(store, guildId);
-  store.guilds[guildId].channels[voiceChannelId] = data;
-  writeStore(store);
-}
-
-function deleteTempChannel(guildId, voiceChannelId) {
-  const store = readStore();
-  ensureGuild(store, guildId);
-  delete store.guilds[guildId].channels[voiceChannelId];
-  writeStore(store);
-}
-
-function findOwnedChannelByUser(guildId, userId) {
-  const store = readStore();
-  ensureGuild(store, guildId);
-
-  for (const [voiceChannelId, data] of Object.entries(store.guilds[guildId].channels)) {
-    if (data.ownerId === userId) {
-      return {
-        voiceChannelId,
-        data
-      };
-    }
-  }
-
-  return null;
-}
-
-function getUserProfile(guildId, userId) {
-  const store = readStore();
-  ensureGuild(store, guildId);
-  return store.guilds[guildId].profiles[userId] || null;
-}
-
-function saveUserProfile(guildId, userId, profile) {
-  const store = readStore();
-  ensureGuild(store, guildId);
-  store.guilds[guildId].profiles[userId] = profile;
-  writeStore(store);
-}
-
-function deleteUserProfile(guildId, userId) {
-  const store = readStore();
-  ensureGuild(store, guildId);
-  delete store.guilds[guildId].profiles[userId];
-  writeStore(store);
-}
-
+/**
+ * Entfernt ein Setup anhand der setupId.
+ */
 function removeGuildSetup(guildId, setupId) {
   const store = readStore();
   ensureGuild(store, guildId);
@@ -208,6 +186,125 @@ function removeGuildSetup(guildId, setupId) {
   return removed;
 }
 
+/**
+ * Aktualisiert ein bestehendes Setup teilweise.
+ * Nur übergebene Felder werden geändert.
+ */
+function updateGuildSetup(guildId, setupId, updates) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+
+  const setups = store.guilds[guildId].config.setups || [];
+  const index = setups.findIndex((setup) => setup.setupId === setupId);
+
+  if (index === -1) {
+    return null;
+  }
+
+  const updatedSetup = {
+    ...setups[index],
+    ...updates
+  };
+
+  store.guilds[guildId].config.setups[index] = updatedSetup;
+  writeStore(store);
+
+  return updatedSetup;
+}
+
+/**
+ * Findet das passende Setup zu einem Join-to-create Channel.
+ */
+function findGuildSetupByJoinChannel(guildId, joinChannelId) {
+  const setups = getGuildSetups(guildId);
+  return setups.find((setup) => setup.joinToCreateChannelId === joinChannelId) || null;
+}
+
+/**
+ * Findet ein Setup per setupId.
+ */
+function findGuildSetupById(guildId, setupId) {
+  const setups = getGuildSetups(guildId);
+  return setups.find((setup) => setup.setupId === setupId) || null;
+}
+
+/**
+ * Gibt Daten eines aktiven Temp-Channels zurück.
+ */
+function getTempChannel(guildId, voiceChannelId) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+  return store.guilds[guildId].channels[voiceChannelId] || null;
+}
+
+/**
+ * Speichert Daten eines aktiven Temp-Channels.
+ */
+function saveTempChannel(guildId, voiceChannelId, data) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+  store.guilds[guildId].channels[voiceChannelId] = data;
+  writeStore(store);
+}
+
+/**
+ * Entfernt einen aktiven Temp-Channel aus dem Store.
+ */
+function deleteTempChannel(guildId, voiceChannelId) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+  delete store.guilds[guildId].channels[voiceChannelId];
+  writeStore(store);
+}
+
+/**
+ * Findet den aktuell von einem User besessenen Temp-Channel.
+ */
+function findOwnedChannelByUser(guildId, userId) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+
+  for (const [voiceChannelId, data] of Object.entries(store.guilds[guildId].channels)) {
+    if (data.ownerId === userId) {
+      return {
+        voiceChannelId,
+        data
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Lädt das persönliche User-Profil.
+ */
+function getUserProfile(guildId, userId) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+  return store.guilds[guildId].profiles[userId] || null;
+}
+
+/**
+ * Speichert das persönliche User-Profil.
+ */
+function saveUserProfile(guildId, userId, profile) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+  store.guilds[guildId].profiles[userId] = profile;
+  writeStore(store);
+}
+
+/**
+ * Entfernt ein User-Profil.
+ */
+function deleteUserProfile(guildId, userId) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+  delete store.guilds[guildId].profiles[userId];
+  writeStore(store);
+}
+
 module.exports = {
   readStore,
   writeStore,
@@ -217,7 +314,9 @@ module.exports = {
   getGuildSetups,
   addGuildSetup,
   removeGuildSetup,
+  updateGuildSetup,
   findGuildSetupByJoinChannel,
+  findGuildSetupById,
   getTempChannel,
   saveTempChannel,
   deleteTempChannel,

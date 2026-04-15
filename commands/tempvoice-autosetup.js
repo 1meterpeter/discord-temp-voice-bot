@@ -6,21 +6,47 @@ const {
 
 const { addGuildSetup } = require("../utils/store");
 
+/**
+ * Auto-Setup:
+ * - erstellt Source-Kategorie + Join-Channel
+ * - nutzt bestehende Open/Closed-Kategorien
+ *
+ * WICHTIG:
+ * Discord verlangt, dass required Optionen VOR optionalen Optionen definiert werden.
+ */
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("tempvoice-autosetup")
-    .setDescription("Erstellt automatisch Kategorie + Join-Channel für Temp-Voices.")
+    .setDescription("Erstellt automatisch Source-Kategorie + Join-Channel und verknüpft sie mit Open/Closed.")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+
+    // REQUIRED Optionen müssen zuerst kommen
     .addStringOption((option) =>
       option
         .setName("setup_name")
         .setDescription("Interner Name dieses Setups")
         .setRequired(true)
     )
+    .addChannelOption((option) =>
+      option
+        .setName("open_category")
+        .setDescription("Kategorie für offene Talks")
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true)
+    )
+    .addChannelOption((option) =>
+      option
+        .setName("closed_category")
+        .setDescription("Kategorie für volle Talks")
+        .addChannelTypes(ChannelType.GuildCategory)
+        .setRequired(true)
+    )
+
+    // OPTIONALE Optionen erst danach
     .addStringOption((option) =>
       option
-        .setName("category_name")
-        .setDescription("Name der Temp-Voice-Kategorie")
+        .setName("source_category_name")
+        .setDescription("Name der Quell-Kategorie")
         .setRequired(false)
     )
     .addStringOption((option) =>
@@ -43,10 +69,13 @@ module.exports = {
     }
 
     const setupName = interaction.options.getString("setup_name", true);
-    const categoryName =
-      interaction.options.getString("category_name") || `🔊 ${setupName}`;
+    const sourceCategoryName =
+      interaction.options.getString("source_category_name") || `🎙️ ${setupName}`;
     const joinChannelName =
       interaction.options.getString("join_channel_name") || "➕ Join to Create";
+
+    const openCategory = interaction.options.getChannel("open_category", true);
+    const closedCategory = interaction.options.getChannel("closed_category", true);
 
     const missingPermissions = [];
 
@@ -85,59 +114,26 @@ module.exports = {
     }
 
     try {
-      const category = await guild.channels.create({
-        name: categoryName,
-        type: ChannelType.GuildCategory,
-        permissionOverwrites: [
-          {
-            id: guild.roles.everyone.id,
-            allow: [PermissionFlagsBits.ViewChannel]
-          },
-          {
-            id: botMember.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.ManageChannels,
-              PermissionFlagsBits.Connect,
-              PermissionFlagsBits.MoveMembers,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory
-            ]
-          }
-        ]
+      // Source-Kategorie: von hier werden später die Rechte übernommen.
+      const sourceCategory = await guild.channels.create({
+        name: sourceCategoryName,
+        type: ChannelType.GuildCategory
       });
 
+      // Join-Channel liegt in der Source-Kategorie.
       const joinChannel = await guild.channels.create({
         name: joinChannelName,
         type: ChannelType.GuildVoice,
-        parent: category.id,
-        permissionOverwrites: [
-          {
-            id: guild.roles.everyone.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.Connect
-            ]
-          },
-          {
-            id: botMember.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.ManageChannels,
-              PermissionFlagsBits.Connect,
-              PermissionFlagsBits.MoveMembers,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ReadMessageHistory
-            ]
-          }
-        ]
+        parent: sourceCategory.id
       });
 
       const setup = {
         setupId: `setup_${Date.now()}`,
         name: setupName,
         joinToCreateChannelId: joinChannel.id,
-        tempCategoryId: category.id
+        sourceCategoryId: sourceCategory.id,
+        openCategoryId: openCategory.id,
+        closedCategoryId: closedCategory.id
       };
 
       addGuildSetup(guild.id, setup);
@@ -146,8 +142,10 @@ module.exports = {
         content:
           `✅ **Temp-Voice Auto-Setup erfolgreich**\n\n` +
           `**Setup-Name:** ${setup.name}\n` +
-          `**Kategorie:** ${category}\n` +
-          `**Join-to-Create:** ${joinChannel}\n\n` +
+          `**Source-Kategorie:** ${sourceCategory}\n` +
+          `**Join-to-Create:** ${joinChannel}\n` +
+          `**Talks Open:** ${openCategory}\n` +
+          `**Talks Closed:** ${closedCategory}\n\n` +
           `Die Konfiguration wurde gespeichert.`,
         ephemeral: true
       });
