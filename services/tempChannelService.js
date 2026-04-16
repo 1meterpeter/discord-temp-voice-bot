@@ -25,30 +25,26 @@ const {
  */
 
 /**
- * Baut einen sprechenden Default-Namen für einen User.
- *
+ * Baut einen sinnvollen Standardnamen für einen User.
  * Beispiel:
- * "Peter" -> "Peter's Talk"
+ * Peter -> Peter's Talk
  */
 function createDisplayName(member) {
   return `${member.displayName}'s ${settings.defaultChannelName}`;
 }
 
 /**
- * Stellt sicher, dass der sichtbare Channelname immer den Voice-Prefix trägt.
- *
+ * Setzt den globalen Voice-Prefix vor einen Namen.
  * Beispiel:
- * "Peter's Talk" -> "🔊 Peter's Talk"
+ * Peter's Talk -> 🔊 Peter's Talk
  */
 function withVoicePrefix(name) {
   return `${settings.voicePrefix} ${String(name || "").trim()}`.trim();
 }
 
 /**
- * Entfernt einen vorhandenen Prefix am Anfang.
- *
- * Das ist nützlich, wenn aus einem gespeicherten Kanalnamen wieder
- * ein "roher" Name extrahiert werden soll.
+ * Entfernt den Prefix wieder vom Anfang eines Namens.
+ * Das wird z. B. verwendet, um Edit-Werte sauber im Modal anzuzeigen.
  */
 function stripVoicePrefix(name) {
   const escapedPrefix = settings.voicePrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -56,11 +52,10 @@ function stripVoicePrefix(name) {
 }
 
 /**
- * Normalisiert einen Benutzernamen-Eingabewert aus dem Edit-Modal.
- *
- * Die Funktion sorgt dafür:
- * - dass der Prefix korrekt gesetzt wird
- * - dass der Name nicht zu lang wird
+ * Normalisiert einen vom User eingegebenen Namen aus dem Edit-Modal.
+ * - trimmt Leerzeichen
+ * - begrenzt die Länge
+ * - setzt den Voice-Prefix sauber davor
  */
 function normalizeStoredChannelNameFromInput(rawName) {
   const clean = String(rawName || "").trim().slice(0, 90);
@@ -68,7 +63,8 @@ function normalizeStoredChannelNameFromInput(rawName) {
 }
 
 /**
- * Gibt das Standardprofil zurück, falls ein User noch kein eigenes Profil besitzt.
+ * Gibt ein Standardprofil zurück, falls der User noch nie
+ * einen TempVoice erstellt hat.
  */
 function getDefaultProfile(member) {
   return {
@@ -81,11 +77,9 @@ function getDefaultProfile(member) {
 }
 
 /**
- * Serialisiert einen laufenden Temp-Talk zurück in ein persönliches User-Profil.
- *
- * Wichtiger Punkt:
- * - Nur der "profilgebundene" Owner speichert Änderungen in sein Profil zurück
- * - Nach Ownership-Transfer ist profileUserId = null und es wird nichts gespeichert
+ * Wandelt laufende Talk-Daten wieder in ein User-Profil um.
+ * Dieses Profil wird nur gespeichert, solange der Talk noch
+ * an den ursprünglichen Owner gebunden ist.
  */
 function serializeProfileFromChannel(channelData) {
   return {
@@ -98,8 +92,11 @@ function serializeProfileFromChannel(channelData) {
 }
 
 /**
- * Speichert das persönliche Profil nur dann zurück,
- * wenn der laufende Channel noch an ein echtes User-Profil gebunden ist.
+ * Speichert Änderungen nur dann zurück ins persönliche User-Profil,
+ * wenn der laufende Talk noch an profileUserId gebunden ist.
+ *
+ * Nach einem Ownership-Transfer ist profileUserId = null,
+ * damit der neue Owner sein eigenes Profil nicht überschreibt.
  */
 function maybePersistProfile(channelData, guildId) {
   if (!channelData.profileUserId) return;
@@ -112,11 +109,11 @@ function maybePersistProfile(channelData, guildId) {
 }
 
 /**
- * Ermittelt den Namen, den ein Channel beim Owner-Wechsel bekommen soll.
+ * Bestimmt, wie der Channel nach einem Owner-Wechsel heissen soll.
  *
  * Priorität:
- * 1. Profilname des neuen Owners (falls vorhanden)
- * 2. sinnvoller Default aus displayName
+ * 1. Profilname des neuen Owners
+ * 2. generierter Standardname anhand displayName
  */
 function resolveChannelNameForNewOwner(guild, newOwnerId) {
   const member = guild.members.cache.get(newOwnerId);
@@ -134,7 +131,7 @@ function resolveChannelNameForNewOwner(guild, newOwnerId) {
 
 /**
  * ------------------------------------------------------------
- * ALLGEMEINE LISTEN- / MEMBER-HILFSFUNKTIONEN
+ * LISTEN / MEMBER-HILFSFUNKTIONEN
  * ------------------------------------------------------------
  */
 
@@ -149,10 +146,10 @@ function dedupeList(arr) {
  * Hält White-/Blacklist konsistent.
  *
  * Regeln:
- * - keine doppelten Einträge
- * - keine ungültigen Werte
+ * - keine doppelten IDs
+ * - keine leeren Werte
  * - niemand gleichzeitig auf White- und Blacklist
- * - Owner nie auf White-/Blacklist
+ * - Owner nie in White-/Blacklist
  */
 function normalizeLists(channelData) {
   channelData.whitelist = dedupeList((channelData.whitelist || []).filter(Boolean));
@@ -167,17 +164,15 @@ function normalizeLists(channelData) {
 }
 
 /**
- * Entfernt IDs, die im Guild-Cache nicht (mehr) als Member vorhanden sind.
+ * Entfernt IDs, die nicht mehr als Guild-Member vorhanden sind.
  */
 function filterValidMemberIds(guild, userIds) {
   return (userIds || []).filter((id) => guild.members.cache.has(id));
 }
 
 /**
- * Gibt alle aktuell aktiven, nicht-bot User-IDs in einem Voicechannel zurück.
- *
- * Diese Liste nutzen wir für Punkt 3:
- * Nur aktive Voice-Mitglieder sollen den Textchat lesen/schreiben dürfen.
+ * Gibt die aktuell aktiven, nicht-bot Voice-Mitglieder zurück.
+ * Diese User sollen den Textchat lesen/schreiben dürfen.
  */
 function getActiveVoiceMemberIds(voiceChannel) {
   if (!voiceChannel) return [];
@@ -194,12 +189,8 @@ function getActiveVoiceMemberIds(voiceChannel) {
  */
 
 /**
- * Kopiert die Permission-Overwrites der Source-Kategorie.
- *
- * Das ist die Basis für:
- * - Rollensichtbarkeit
- * - spezielle Rollenrechte
- * - private Serverstrukturen
+ * Kopiert die Overwrites der Source-Kategorie.
+ * Diese bilden die Basis für Rollenrechte und Sichtbarkeit.
  */
 function cloneSourceCategoryOverwrites(sourceCategory) {
   if (!sourceCategory) return [];
@@ -213,11 +204,7 @@ function cloneSourceCategoryOverwrites(sourceCategory) {
 }
 
 /**
- * Fügt ein Overwrite in eine Liste ein oder überschreibt ein bestehendes.
- *
- * Vorteil:
- * - wir können zuerst die Source-Rechte übernehmen
- * - und danach einzelne Ziel-Overwrites gezielt anpassen
+ * Fügt ein Overwrite neu ein oder überschreibt ein vorhandenes.
  */
 function upsertOverwrite(overwrites, newOverwrite) {
   const index = overwrites.findIndex((entry) => entry.id === newOverwrite.id);
@@ -234,7 +221,7 @@ function upsertOverwrite(overwrites, newOverwrite) {
 }
 
 /**
- * Gibt das Everyone-Overwrite der Source-Kategorie zurück, falls vorhanden.
+ * Holt das @everyone Overwrite der Source-Kategorie, falls vorhanden.
  */
 function getSourceEveryoneOverwrite(sourceCategory, guild) {
   if (!sourceCategory) return null;
@@ -242,17 +229,12 @@ function getSourceEveryoneOverwrite(sourceCategory, guild) {
 }
 
 /**
- * Baut ein "sauberes" Basis-Overwrite für @everyone.
+ * Baut ein gezieltes Baseline-Overwrite für @everyone.
  *
  * Ziel:
- * - Sichtbarkeit aus der Source-Kategorie möglichst sauber erhalten
- * - fremde Rechte aus der Zielkategorie nicht ungewollt erben
- * - Textchat standardmässig sperren
- *
- * Verhalten:
- * - ViewChannel: wird aus Source-@everyone abgeleitet
- * - Connect: im Open-Modus aus Source-@everyone, im Private-Modus explizit denied
- * - SendMessages/ReadMessageHistory: standardmässig denied
+ * - Sichtbarkeit aus Source erhalten
+ * - Connect bei Private sperren
+ * - Textchat standardmässig nicht global sichtbar machen
  */
 function buildEveryoneBaselineOverwrite(guild, sourceCategory, isPrivate) {
   const sourceEveryone = getSourceEveryoneOverwrite(sourceCategory, guild);
@@ -280,7 +262,6 @@ function buildEveryoneBaselineOverwrite(guild, sourceCategory, isPrivate) {
     deny |= BigInt(PermissionFlagsBits.Connect);
   }
 
-  // Textchat soll standardmässig NICHT für alle zugänglich sein.
   deny |= BigInt(PermissionFlagsBits.SendMessages);
   deny |= BigInt(PermissionFlagsBits.ReadMessageHistory);
 
@@ -293,12 +274,9 @@ function buildEveryoneBaselineOverwrite(guild, sourceCategory, isPrivate) {
 }
 
 /**
- * Entfernt Textchat-Rechte von Rollen und passt ggf. Connect für Private an.
- *
- * Das ist wichtig für zwei Ziele:
- *
- * 1. Nur aktive User im Voice sollen den Textchat lesen/schreiben können
- * 2. Private Talks sollen NICHT plötzlich wegen Rollenrechten wieder offen joinbar sein
+ * Entfernt Textchat-Rechte aus Rollen-Overwrites.
+ * Zusätzlich wird im Private-Modus Connect auf Rollenebene gesperrt,
+ * damit der Talk nicht doch wieder ungewollt offen ist.
  */
 function sanitizeRoleOverwriteForTempVoice(roleOverwrite, guild, isPrivate) {
   const updated = {
@@ -307,14 +285,12 @@ function sanitizeRoleOverwriteForTempVoice(roleOverwrite, guild, isPrivate) {
     deny: BigInt(roleOverwrite.deny || 0n)
   };
 
-  // Voice-Textchat für Rollen grundsätzlich abschalten.
   updated.allow &= ~BigInt(PermissionFlagsBits.SendMessages);
   updated.allow &= ~BigInt(PermissionFlagsBits.ReadMessageHistory);
 
   updated.deny |= BigInt(PermissionFlagsBits.SendMessages);
   updated.deny |= BigInt(PermissionFlagsBits.ReadMessageHistory);
 
-  // Im Private-Modus sollen Rollen nicht einfach weiter connecten dürfen.
   if (isPrivate && updated.id !== guild.roles.everyone.id) {
     updated.allow &= ~BigInt(PermissionFlagsBits.Connect);
     updated.deny |= BigInt(PermissionFlagsBits.Connect);
@@ -324,13 +300,13 @@ function sanitizeRoleOverwriteForTempVoice(roleOverwrite, guild, isPrivate) {
 }
 
 /**
- * Baut die finalen Overwrites für einen laufenden Temp-Talk.
+ * Baut die finalen Overwrites für den laufenden TempVoice.
  *
- * Zentrale Ziele:
- * - Sichtbarkeit / Rollenstruktur aus der Source-Kategorie erhalten
- * - Privacy darf Sichtbarkeit NICHT zerstören
- * - nur aktive Voice-Mitglieder lesen/schreiben im TempVoice-Textchat
- * - Owner / Bot / Whitelist / Blacklist werden korrekt berücksichtigt
+ * Ziele:
+ * - Sichtbarkeit aus Source-Kategorie erhalten
+ * - Private soll nur Connect sperren, nicht globale Sichtbarkeit erzeugen
+ * - nur aktive Voice-Mitglieder sehen den Textchat
+ * - Owner / Bot / White-/Blacklist korrekt berücksichtigen
  */
 function buildChannelOverwrites(guild, channelData, sourceCategory, activeMemberIds = []) {
   const botMember = guild.members.me;
@@ -340,23 +316,11 @@ function buildChannelOverwrites(guild, channelData, sourceCategory, activeMember
     throw new Error("Bot-Mitglied konnte nicht gefunden werden.");
   }
 
-  /**
-   * 1) Everyone-Basis explizit setzen
-   *
-   * Damit verhindern wir, dass eine offene Zielkategorie (Talks Open)
-   * plötzlich Sichtbarkeit oder Connect-Rechte "reinvererbt",
-   * die in der Source-Kategorie gar nicht vorgesehen waren.
-   */
   upsertOverwrite(
     overwrites,
     buildEveryoneBaselineOverwrite(guild, sourceCategory, channelData.isPrivate)
   );
 
-  /**
-   * 2) Alle Rollen-Overwrites so anpassen, dass:
-   * - Textchat nicht für ganze Rollen offen bleibt
-   * - Private nicht durch Rollenrechte wieder "aufgeht"
-   */
   for (let i = 0; i < overwrites.length; i++) {
     if (overwrites[i].type === OverwriteType.Role) {
       overwrites[i] = sanitizeRoleOverwriteForTempVoice(
@@ -367,9 +331,6 @@ function buildChannelOverwrites(guild, channelData, sourceCategory, activeMember
     }
   }
 
-  /**
-   * 3) Bot immer freischalten
-   */
   upsertOverwrite(overwrites, {
     id: botMember.id,
     type: OverwriteType.Member,
@@ -383,9 +344,6 @@ function buildChannelOverwrites(guild, channelData, sourceCategory, activeMember
     deny: 0n
   });
 
-  /**
-   * 4) Owner immer vollständig freischalten
-   */
   upsertOverwrite(overwrites, {
     id: channelData.ownerId,
     type: OverwriteType.Member,
@@ -398,11 +356,6 @@ function buildChannelOverwrites(guild, channelData, sourceCategory, activeMember
     deny: 0n
   });
 
-  /**
-   * 5) Aktive Voice-Mitglieder dürfen den Textchat lesen/schreiben.
-   *
-   * Das ist die technische Umsetzung von Punkt 3.
-   */
   for (const userId of activeMemberIds) {
     upsertOverwrite(overwrites, {
       id: userId,
@@ -416,11 +369,6 @@ function buildChannelOverwrites(guild, channelData, sourceCategory, activeMember
     });
   }
 
-  /**
-   * 6) Whitelist:
-   * Diese User dürfen den Talk grundsätzlich sehen/joinen.
-   * Textchat gibt es aber erst, wenn sie tatsächlich im Voice sind.
-   */
   for (const userId of channelData.whitelist) {
     upsertOverwrite(overwrites, {
       id: userId,
@@ -434,10 +382,6 @@ function buildChannelOverwrites(guild, channelData, sourceCategory, activeMember
     });
   }
 
-  /**
-   * 7) Blacklist:
-   * Vollständig aussperren.
-   */
   for (const userId of channelData.blacklist) {
     upsertOverwrite(overwrites, {
       id: userId,
@@ -455,7 +399,7 @@ function buildChannelOverwrites(guild, channelData, sourceCategory, activeMember
 }
 
 /**
- * Prüft, ob der Talk aktuell "voll" ist.
+ * Prüft, ob der Channel aktuell voll ist.
  */
 function isChannelFull(voiceChannel, channelData) {
   if (!voiceChannel) return false;
@@ -465,11 +409,8 @@ function isChannelFull(voiceChannel, channelData) {
 }
 
 /**
- * Aktualisiert die Position des Channels:
- * - offen -> openCategoryId
- * - voll  -> closedCategoryId
- *
- * Dabei bleibt es IMMER derselbe Channel.
+ * Verschiebt den bestehenden Talk je nach Füllstand zwischen
+ * Open- und Closed-Kategorie.
  */
 async function ensureChannelPlacement(guild, voiceChannelId) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
@@ -502,21 +443,87 @@ async function ensureChannelPlacement(guild, voiceChannelId) {
 
 /**
  * ------------------------------------------------------------
- * CREATE / PANEL / PERMISSIONS
+ * PANEL-VERWALTUNG
  * ------------------------------------------------------------
  */
 
 /**
- * Erstellt einen neuen Temp-Voice-Channel.
+ * Sendet ein komplett neues Panel in den Voice-Textchat
+ * und speichert die neue panelMessageId.
  *
- * Ablauf:
- * 1. Setup prüfen
- * 2. Source-Kategorie bestimmen
- * 3. gespeichertes User-Profil laden
- * 4. Channel in Open-Kategorie erstellen
- * 5. Rechte auf Basis der Source-Kategorie anwenden
- * 6. Panel senden
- * 7. User verschieben
+ * Optional kann versucht werden, das alte Panel zu löschen.
+ *
+ * Diese Funktion ist wichtig für Fälle wie:
+ * - Owner-Wechsel
+ * - altes Panel wurde gelöscht
+ * - neuer Owner konnte die alte Nachricht nie zuverlässig sehen
+ */
+async function sendFreshPanelMessage(guild, voiceChannelId, deleteOldPanel = false) {
+  const channelData = getTempChannel(guild.id, voiceChannelId);
+  if (!channelData) return null;
+
+  const voiceChannel = guild.channels.cache.get(channelData.voiceChannelId);
+  if (!voiceChannel) return null;
+
+  const oldPanelMessageId = channelData.panelMessageId;
+
+  const newPanelMessage = await voiceChannel.send({
+    flags: MessageFlags.IsComponentsV2 | MessageFlags.SuppressNotifications,
+    components: buildMainPanelComponents(channelData)
+  });
+
+  channelData.panelMessageId = newPanelMessage.id;
+  saveTempChannel(guild.id, voiceChannelId, channelData);
+
+  if (deleteOldPanel && oldPanelMessageId && oldPanelMessageId !== newPanelMessage.id) {
+    try {
+      const oldMsg = await voiceChannel.messages.fetch(oldPanelMessageId);
+      await oldMsg.delete().catch(() => {});
+    } catch {
+      // Ignorieren, falls die alte Nachricht bereits fehlt oder nicht löschbar ist
+    }
+  }
+
+  return newPanelMessage;
+}
+
+/**
+ * Aktualisiert das bestehende Panel.
+ *
+ * Falls die alte Panel-Nachricht nicht mehr existiert,
+ * wird automatisch ein neues Panel erstellt.
+ */
+async function updatePanel(guild, voiceChannelId) {
+  const channelData = getTempChannel(guild.id, voiceChannelId);
+  if (!channelData) return;
+
+  normalizeLists(channelData);
+  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
+  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
+  saveTempChannel(guild.id, voiceChannelId, channelData);
+
+  const voiceChannel = guild.channels.cache.get(channelData.voiceChannelId);
+  if (!voiceChannel) return;
+
+  try {
+    const msg = await voiceChannel.messages.fetch(channelData.panelMessageId);
+    await msg.edit({
+      components: buildMainPanelComponents(channelData)
+    });
+  } catch (error) {
+    console.error("Panel konnte nicht aktualisiert werden, neues Panel wird erstellt:", error.message);
+    await sendFreshPanelMessage(guild, voiceChannelId, false).catch(console.error);
+  }
+}
+
+/**
+ * ------------------------------------------------------------
+ * CREATE / PERMISSIONS / SETTINGS
+ * ------------------------------------------------------------
+ */
+
+/**
+ * Erstellt einen neuen TempVoice.
  */
 async function createTempChannel(member, joinChannel, setup) {
   const guild = member.guild;
@@ -535,8 +542,6 @@ async function createTempChannel(member, joinChannel, setup) {
     throw new Error(`Die Open-Kategorie ${setup.openCategoryId} wurde nicht gefunden.`);
   }
 
-  // Falls sourceCategoryId nicht explizit im Setup steht,
-  // verwenden wir die Parent-Kategorie des Join-Channels.
   const sourceCategoryId = setup.sourceCategoryId || joinChannel.parentId;
   const sourceCategory = sourceCategoryId
     ? guild.channels.cache.get(sourceCategoryId)
@@ -570,7 +575,6 @@ async function createTempChannel(member, joinChannel, setup) {
   channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
   channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
 
-  // Zu Erstellungszeitpunkt ist nur der Ersteller aktiv im Channel.
   const activeMemberIds = [member.id];
 
   const voiceOverwrites = buildChannelOverwrites(
@@ -624,38 +628,7 @@ async function createTempChannel(member, joinChannel, setup) {
 }
 
 /**
- * Aktualisiert das Panel im Voice-Textchat.
- */
-async function updatePanel(guild, voiceChannelId) {
-  const channelData = getTempChannel(guild.id, voiceChannelId);
-  if (!channelData) return;
-
-  normalizeLists(channelData);
-  channelData.whitelist = filterValidMemberIds(guild, channelData.whitelist);
-  channelData.blacklist = filterValidMemberIds(guild, channelData.blacklist);
-  saveTempChannel(guild.id, voiceChannelId, channelData);
-
-  const voiceChannel = guild.channels.cache.get(channelData.voiceChannelId);
-  if (!voiceChannel) return;
-
-  try {
-    const msg = await voiceChannel.messages.fetch(channelData.panelMessageId);
-    await msg.edit({
-      components: buildMainPanelComponents(channelData)
-    });
-  } catch (error) {
-    console.error("Panel konnte nicht aktualisiert werden:", error);
-  }
-}
-
-/**
- * Rechnet alle Overwrites eines bestehenden Temp-Talks neu.
- *
- * Diese Funktion ist der zentrale Punkt für:
- * - Privacy
- * - Owner-Wechsel
- * - White-/Blacklist
- * - aktiven Textchat-Zugriff
+ * Rechnet die Channel-Rechte komplett neu.
  */
 async function applyPermissions(guild, voiceChannelId) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
@@ -686,23 +659,15 @@ async function applyPermissions(guild, voiceChannelId) {
 }
 
 /**
- * Komfortfunktion, damit der aktive Chat-Zugriff nach Join/Leave schnell
- * neu synchronisiert werden kann.
- *
- * Technisch macht sie aktuell dasselbe wie applyPermissions(),
- * aber der Name macht den Aufruf im VoiceState-Handler lesbarer.
+ * Hilfsfunktion, um die Textchat-Sichtbarkeit für aktive Voice-Mitglieder
+ * nach Join/Leave sofort neu zu berechnen.
  */
 async function syncActiveChatAccess(guild, voiceChannelId) {
   await applyPermissions(guild, voiceChannelId);
 }
 
 /**
- * Atomisches Update für Name / Limit / Privacy.
- *
- * Vorteil:
- * - weniger Race Conditions
- * - weniger unnötige Einzelupdates
- * - sauberere Fehlerbehandlung
+ * Führt mehrere Channel-Änderungen gesammelt in einem Update aus.
  */
 async function updateChannelSettings(guild, voiceChannelId, updates) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
@@ -753,33 +718,34 @@ async function updateChannelSettings(guild, voiceChannelId, updates) {
 }
 
 /**
- * Setzt die Privacy.
+ * Setzt Privacy.
  */
 async function setPrivacy(guild, voiceChannelId, isPrivate) {
   return updateChannelSettings(guild, voiceChannelId, { isPrivate });
 }
 
 /**
- * Setzt den Talknamen.
+ * Setzt den Kanalnamen.
  */
 async function renameChannel(guild, voiceChannelId, newName) {
   return updateChannelSettings(guild, voiceChannelId, { name: newName });
 }
 
 /**
- * Setzt das User-Limit.
+ * Setzt das Userlimit.
  */
 async function setUserLimit(guild, voiceChannelId, limit) {
   return updateChannelSettings(guild, voiceChannelId, { userLimit: limit });
 }
 
 /**
- * Ownership-Transfer.
+ * Überträgt Ownership an einen anderen aktiven User.
  *
- * Wichtige Regeln:
- * - der laufende Talk behält seine sonstigen Einstellungen
- * - profileUserId wird gelöst -> Änderungen gelten nur noch für diesen Talk
- * - der Channelname wird an den neuen Owner angepasst
+ * Wichtige Zusätze:
+ * - profileUserId wird gelöst
+ * - Name wird an den neuen Owner angepasst
+ * - es wird ein FRISCHES Panel erstellt, damit der neue Owner
+ *   garantiert ein sichtbares Panel im Chat hat
  */
 async function transferOwnership(guild, voiceChannelId, newOwnerId) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
@@ -793,11 +759,8 @@ async function transferOwnership(guild, voiceChannelId, newOwnerId) {
   channelData.whitelist = (channelData.whitelist || []).filter((id) => id !== newOwnerId);
   channelData.blacklist = (channelData.blacklist || []).filter((id) => id !== newOwnerId);
 
-  // Nach Ownership-Wechsel keine Profilbindung mehr:
-  // Der neue Owner soll NICHT versehentlich sein persönliches Profil überschreiben.
   channelData.profileUserId = null;
 
-  // Nur der Name wird an den neuen Owner angepasst.
   const newChannelName = resolveChannelNameForNewOwner(guild, newOwnerId);
   const nameChanged = newChannelName !== channelData.name;
 
@@ -815,7 +778,15 @@ async function transferOwnership(guild, voiceChannelId, newOwnerId) {
 
   await applyPermissions(guild, voiceChannelId);
   await ensureChannelPlacement(guild, voiceChannelId);
-  await updatePanel(guild, voiceChannelId);
+
+  /**
+   * Sehr wichtig:
+   * Statt nur das alte Panel zu editieren, senden wir beim Owner-Wechsel
+   * ein frisches Panel und ersetzen die gespeicherte panelMessageId.
+   *
+   * Dadurch sieht der neue Owner das Panel zuverlässig.
+   */
+  await sendFreshPanelMessage(guild, voiceChannelId, true);
 
   return true;
 }
@@ -877,7 +848,7 @@ async function removeFromList(guild, voiceChannelId, listName, userIds) {
 }
 
 /**
- * Löscht einen Temp-Channel vollständig.
+ * Löscht einen TempVoice vollständig und entfernt ihn aus dem Store.
  */
 async function deleteTempChannelSet(guild, voiceChannelId) {
   const channelData = getTempChannel(guild.id, voiceChannelId);
