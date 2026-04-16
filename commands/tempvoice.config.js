@@ -6,7 +6,7 @@ const {
 const { getGuildSetups } = require("../utils/store");
 
 /**
- * Zeigt alle Setups der Guild an.
+ * Zeigt alle aktuell gespeicherten Temp-Voice-Setups einer Guild an.
  */
 module.exports = {
   data: new SlashCommandBuilder()

@@ -19,7 +19,12 @@ const {
 
 /**
  * Prüft, ob der aktuelle User den Talk verwalten darf.
- * Aktuell: nur der Owner.
+ *
+ * Aktuell:
+ * - nur der Owner
+ *
+ * Später könnte man hier zusätzlich Admins erlauben,
+ * falls du das wieder aktivieren willst.
  */
 function isManager(interaction, channelData) {
   if (!interaction.member) return false;
@@ -27,7 +32,10 @@ function isManager(interaction, channelData) {
 }
 
 /**
- * Liste aktiver User im Voice (ohne Owner und ohne Bots).
+ * Gibt alle aktuell aktiven User im Voice zurück,
+ * exklusive Owner und Bots.
+ *
+ * Diese Liste verwenden wir beim manuellen Owner-Wechsel.
  */
 function getActiveVoiceMembers(voiceChannel, ownerId = null) {
   return [...voiceChannel.members.values()].filter(
@@ -36,14 +44,21 @@ function getActiveVoiceMembers(voiceChannel, ownerId = null) {
 }
 
 /**
- * Entfernt Owner aus White-/Blacklist-Anzeige.
+ * Bereinigt eine bestehende White-/Blacklist für die Anzeige.
+ *
+ * Dabei entfernen wir:
+ * - leere Werte
+ * - den aktuellen Owner
  */
 function sanitizeExistingList(channelData, listName) {
   return (channelData[listName] || []).filter((id) => id && id !== channelData.ownerId);
 }
 
 /**
- * Modal für Name / Limit / Privacy.
+ * Baut das Edit-Modal für:
+ * - Name
+ * - Limit
+ * - Privacy
  */
 function buildEditModal(voiceChannelId, channelData) {
   const nameInput = new TextInputBuilder()
@@ -87,7 +102,7 @@ function buildEditModal(voiceChannelId, channelData) {
 }
 
 /**
- * Modal für Owner-Wechsel.
+ * Baut das Modal für den manuellen Owner-Wechsel.
  */
 function buildOwnerModal(voiceChannelId, members) {
   const options = members.slice(0, 25).map((member) => ({
@@ -114,8 +129,11 @@ function buildOwnerModal(voiceChannelId, members) {
 }
 
 /**
- * Ein einziges Modal für White-/Blacklist.
- * Bereits ausgewählte User sind vorausgewählt.
+ * Baut das Modal für White-/Blacklist.
+ *
+ * Nutzer können hier:
+ * - User hinzufügen
+ * - User abwählen / entfernen
  */
 function buildListModal(voiceChannelId, listName, channelData) {
   const existing = sanitizeExistingList(channelData, listName).slice(0, 25);
@@ -144,7 +162,9 @@ function buildListModal(voiceChannelId, listName, channelData) {
 module.exports = async function handleInteractionCreate(interaction) {
   try {
     /**
-     * Button-Klicks im Panel.
+     * ------------------------------------------------------------
+     * BUTTON-KLICKS IM PANEL
+     * ------------------------------------------------------------
      */
     if (interaction.isButton()) {
       const [prefix, action, voiceChannelId] = interaction.customId.split(":");
@@ -209,7 +229,9 @@ module.exports = async function handleInteractionCreate(interaction) {
     }
 
     /**
-     * Modal wurde abgesendet.
+     * ------------------------------------------------------------
+     * MODAL-SUBMITS
+     * ------------------------------------------------------------
      */
     if (interaction.isModalSubmit()) {
       const parts = interaction.customId.split(":");
@@ -246,9 +268,9 @@ module.exports = async function handleInteractionCreate(interaction) {
       }
 
       /**
-       * Edit-Modal:
-       * Alle Änderungen in einem einzigen Update.
-       * Das reduziert Fehlermeldungen / Mehrfach-Updates deutlich.
+       * EDIT:
+       * Führt Name / Limit / Privacy gesammelt in EINEM Update aus,
+       * damit weniger Race-Conditions und Zwischenfehler auftreten.
        */
       if (action === "edit") {
         const newName = interaction.fields.getTextInputValue("channel_name").trim();
@@ -279,7 +301,8 @@ module.exports = async function handleInteractionCreate(interaction) {
       }
 
       /**
-       * Owner-Wechsel.
+       * OWNER-WECHSEL:
+       * Nur User, die gerade aktiv im Voice sind, dürfen gewählt werden.
        */
       if (action === "owner") {
         const selectedOwnerId = interaction.fields.getStringSelectValues("new_owner")[0];
@@ -308,8 +331,14 @@ module.exports = async function handleInteractionCreate(interaction) {
       }
 
       /**
-       * White-/Blacklist:
-       * Vergleich zwischen alter Liste und neuer Auswahl.
+       * WHITE-/BLACKLIST:
+       * Wir vergleichen:
+       * - alte Liste
+       * - neu ausgewählte Liste
+       *
+       * Daraus ergeben sich:
+       * - neue User -> addToList()
+       * - abgewählte User -> removeFromList()
        */
       if (action === "whitelist" || action === "blacklist") {
         const listName = action;

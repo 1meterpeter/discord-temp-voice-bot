@@ -7,6 +7,13 @@ const {
   TextDisplayBuilder
 } = require("discord.js");
 
+/**
+ * Baut eine kompakte Mention-Liste.
+ *
+ * Beispiel:
+ * - 1-3 User -> alle erwähnen
+ * - mehr -> erste zwei anzeigen, Rest als +X
+ */
 function formatCompactUserList(userIds) {
   if (!userIds || userIds.length === 0) return "—";
 
@@ -21,6 +28,16 @@ function formatCompactUserList(userIds) {
   return `${preview}, +${rest}`;
 }
 
+/**
+ * Baut die sichtbaren Panel-Komponenten für den Textchat des Voicechannels.
+ *
+ * Das Panel zeigt:
+ * - Owner
+ * - Privacy / Limit
+ * - Whitelist
+ * - Blacklist
+ * - Buttons für Bearbeitung
+ */
 function buildMainPanelComponents(channelData) {
   const title = new TextDisplayBuilder().setContent("## 🎛️ Temp Voice Panel");
 

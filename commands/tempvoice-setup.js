@@ -8,11 +8,10 @@ const { addGuildSetup } = require("../utils/store");
 
 /**
  * Manuelles Setup:
- * - join_channel = der Create-Talk Channel
- * - open_category = Talks Open
- * - closed_category = Talks Closed
- *
- * Die Source-Category wird automatisch aus der Parent-Kategorie des Join-Channels abgeleitet.
+ * - Join-Channel wird angegeben
+ * - Open-Kategorie wird angegeben
+ * - Closed-Kategorie wird angegeben
+ * - Source-Kategorie wird automatisch über die Parent-Kategorie des Join-Channels erkannt
  */
 module.exports = {
   data: new SlashCommandBuilder()

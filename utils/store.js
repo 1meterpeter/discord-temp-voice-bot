@@ -3,12 +3,19 @@ const path = require("path");
 
 /**
  * Zentrale JSON-Datei für persistente Bot-Daten.
- * Durch dein Volume auf JustRunMyApp bleibt diese Datei auch nach Neustarts erhalten.
+ *
+ * Wichtige Info:
+ * - Diese Datei liegt im Projekt unter /data/tempChannels.json
+ * - Wenn dein Hosting ein persistentes Volume auf /app/data mapped,
+ *   bleibt der Inhalt auch nach Neustarts erhalten
  */
 const DATA_FILE = path.join(__dirname, "..", "data", "tempChannels.json");
 
 /**
- * Erstellt die JSON-Datei beim ersten Start, falls sie noch nicht existiert.
+ * Stellt sicher, dass die JSON-Datei überhaupt existiert.
+ *
+ * Falls die Datei beim ersten Start noch nicht vorhanden ist,
+ * wird sie mit einer leeren Grundstruktur angelegt.
  */
 function ensureDataFile() {
   if (!fs.existsSync(DATA_FILE)) {
@@ -22,6 +29,17 @@ function ensureDataFile() {
 
 /**
  * Liest den kompletten Store aus der JSON-Datei.
+ *
+ * Rückgabeformat:
+ * {
+ *   guilds: {
+ *     [guildId]: {
+ *       config: { setups: [...] },
+ *       channels: { ... },
+ *       profiles: { ... }
+ *     }
+ *   }
+ * }
  */
 function readStore() {
   ensureDataFile();
@@ -43,6 +61,10 @@ function readStore() {
 
 /**
  * Schreibt den kompletten Store zurück in die JSON-Datei.
+ *
+ * Hinweis:
+ * - Das ist eine "vollständige" Schreiboperation
+ * - Es wird also nicht teilweise gepatcht, sondern das gesamte Objekt gespeichert
  */
 function writeStore(data) {
   ensureDataFile();
@@ -50,7 +72,27 @@ function writeStore(data) {
 }
 
 /**
- * Migriert alte Configs auf die neue Struktur.
+ * Migriert alte Configs auf die neue Struktur mit setups[].
+ *
+ * Alter Stand:
+ * {
+ *   joinToCreateChannelId,
+ *   tempCategoryId
+ * }
+ *
+ * Neuer Stand:
+ * {
+ *   setups: [
+ *     {
+ *       setupId,
+ *       name,
+ *       joinToCreateChannelId,
+ *       sourceCategoryId,
+ *       openCategoryId,
+ *       closedCategoryId
+ *     }
+ *   ]
+ * }
  */
 function migrateLegacyConfig(config) {
   if (!config || typeof config !== "object") {
@@ -79,6 +121,11 @@ function migrateLegacyConfig(config) {
 
 /**
  * Stellt sicher, dass eine Guild-Struktur im Store existiert.
+ *
+ * Pro Guild speichern wir:
+ * - config   -> Setups / allgemeine Konfiguration
+ * - channels -> laufende Temp-Channels
+ * - profiles -> persönliche User-Profile
  */
 function ensureGuild(store, guildId) {
   if (!store.guilds[guildId]) {
@@ -122,7 +169,11 @@ function getGuildConfig(guildId) {
 }
 
 /**
- * Speichert eine komplette Guild-Config.
+ * Speichert die komplette Guild-Config.
+ *
+ * Wichtiger Punkt:
+ * - vorhandene Felder bleiben erhalten
+ * - setups werden nur überschrieben, wenn wirklich ein setups-Array übergeben wurde
  */
 function saveGuildConfig(guildId, config) {
   const store = readStore();
@@ -188,7 +239,9 @@ function removeGuildSetup(guildId, setupId) {
 
 /**
  * Aktualisiert ein bestehendes Setup teilweise.
- * Nur übergebene Felder werden geändert.
+ *
+ * Beispiel:
+ * updateGuildSetup(guildId, setupId, { openCategoryId: "123" })
  */
 function updateGuildSetup(guildId, setupId, updates) {
   const store = readStore();
@@ -213,7 +266,7 @@ function updateGuildSetup(guildId, setupId, updates) {
 }
 
 /**
- * Findet das passende Setup zu einem Join-to-create Channel.
+ * Findet das passende Setup zu einem Join-to-Create-Channel.
  */
 function findGuildSetupByJoinChannel(guildId, joinChannelId) {
   const setups = getGuildSetups(guildId);
@@ -221,7 +274,7 @@ function findGuildSetupByJoinChannel(guildId, joinChannelId) {
 }
 
 /**
- * Findet ein Setup per setupId.
+ * Findet ein Setup anhand seiner setupId.
  */
 function findGuildSetupById(guildId, setupId) {
   const setups = getGuildSetups(guildId);
@@ -229,7 +282,11 @@ function findGuildSetupById(guildId, setupId) {
 }
 
 /**
- * Gibt Daten eines aktiven Temp-Channels zurück.
+ * Gibt die Daten eines aktiven Temp-Channels zurück.
+ *
+ * Rückgabe:
+ * - channelData Objekt
+ * - oder null, wenn der Channel nicht mehr im Store existiert
  */
 function getTempChannel(guildId, voiceChannelId) {
   const store = readStore();
@@ -258,7 +315,10 @@ function deleteTempChannel(guildId, voiceChannelId) {
 }
 
 /**
- * Findet den aktuell von einem User besessenen Temp-Channel.
+ * Findet den aktuell von einem User "besessenen" Temp-Channel.
+ *
+ * Das wird verwendet, wenn jemand erneut in einen Join-to-Create joint
+ * und geprüft werden soll, ob schon ein laufender Temp-Talk für ihn existiert.
  */
 function findOwnedChannelByUser(guildId, userId) {
   const store = readStore();
@@ -277,7 +337,13 @@ function findOwnedChannelByUser(guildId, userId) {
 }
 
 /**
- * Lädt das persönliche User-Profil.
+ * Lädt das persönliche Profil eines Users.
+ *
+ * Dieses Profil enthält z. B.:
+ * - bevorzugter Talkname
+ * - Userlimit
+ * - Privacy
+ * - White-/Blacklist
  */
 function getUserProfile(guildId, userId) {
   const store = readStore();
@@ -286,7 +352,7 @@ function getUserProfile(guildId, userId) {
 }
 
 /**
- * Speichert das persönliche User-Profil.
+ * Speichert das persönliche Profil eines Users.
  */
 function saveUserProfile(guildId, userId, profile) {
   const store = readStore();

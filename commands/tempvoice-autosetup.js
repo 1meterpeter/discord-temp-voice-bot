@@ -8,11 +8,13 @@ const { addGuildSetup } = require("../utils/store");
 
 /**
  * Auto-Setup:
- * - erstellt Source-Kategorie + Join-Channel
- * - nutzt bestehende Open/Closed-Kategorien
+ * - erstellt eine Source-Kategorie
+ * - erstellt darin den Join-to-Create-Channel
+ * - verknüpft alles mit bestehenden Open/Closed-Kategorien
  *
- * WICHTIG:
- * Discord verlangt, dass required Optionen VOR optionalen Optionen definiert werden.
+ * Wichtig:
+ * Discord verlangt:
+ * required Optionen VOR optionalen Optionen.
  */
 module.exports = {
   data: new SlashCommandBuilder()
@@ -20,7 +22,6 @@ module.exports = {
     .setDescription("Erstellt automatisch Source-Kategorie + Join-Channel und verknüpft sie mit Open/Closed.")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 
-    // REQUIRED Optionen müssen zuerst kommen
     .addStringOption((option) =>
       option
         .setName("setup_name")
@@ -42,7 +43,6 @@ module.exports = {
         .setRequired(true)
     )
 
-    // OPTIONALE Optionen erst danach
     .addStringOption((option) =>
       option
         .setName("source_category_name")
@@ -114,13 +114,11 @@ module.exports = {
     }
 
     try {
-      // Source-Kategorie: von hier werden später die Rechte übernommen.
       const sourceCategory = await guild.channels.create({
         name: sourceCategoryName,
         type: ChannelType.GuildCategory
       });
 
-      // Join-Channel liegt in der Source-Kategorie.
       const joinChannel = await guild.channels.create({
         name: joinChannelName,
         type: ChannelType.GuildVoice,

@@ -9,7 +9,11 @@ const {
 } = require("../utils/store");
 
 /**
- * Entfernt ein gespeichertes Setup.
+ * Entfernt ein gespeichertes Temp-Voice-Setup.
+ *
+ * Optional:
+ * - Join-Channel löschen
+ * - Source-Kategorie löschen
  */
 module.exports = {
   data: new SlashCommandBuilder()

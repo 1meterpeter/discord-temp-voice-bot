@@ -12,9 +12,7 @@ const {
 /**
  * Bearbeitet ein bestehendes Temp-Voice-Setup.
  *
- * Nur angegebene Werte werden geändert.
- * Dadurch kannst du z. B. nur die Open-/Closed-Kategorien wechseln,
- * ohne das komplette Setup neu anzulegen.
+ * Es werden nur die Felder geändert, die wirklich angegeben wurden.
  */
 module.exports = {
   data: new SlashCommandBuilder()

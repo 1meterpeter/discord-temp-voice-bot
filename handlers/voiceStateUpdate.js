@@ -8,12 +8,13 @@ const {
   createTempChannel,
   deleteTempChannelSet,
   transferOwnership,
-  ensureChannelPlacement
+  ensureChannelPlacement,
+  syncActiveChatAccess
 } = require("../services/tempChannelService");
 
 /**
- * Verhindert doppelte Channel-Erstellung, wenn Discord kurz hintereinander
- * mehrere VoiceState-Updates feuert.
+ * Verhindert doppelte Channel-Erstellung, wenn Discord kurz nacheinander
+ * mehrere VoiceStateUpdates für denselben User feuert.
  */
 const creationLocks = new Set();
 
@@ -33,7 +34,9 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
     );
 
     /**
-     * Prüfen, ob der neue Channel ein Join-to-create Channel aus einem Setup ist.
+     * ------------------------------------------------------------
+     * 1) JOIN-TO-CREATE CHECK
+     * ------------------------------------------------------------
      */
     const matchedSetup = newChannelId
       ? findGuildSetupByJoinChannel(guild.id, newChannelId)
@@ -46,7 +49,9 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
     }
 
     /**
-     * User joint einen Setup-Channel -> Temp-Voice erstellen.
+     * ------------------------------------------------------------
+     * 2) USER JOINT EINEN CREATE-CHANNEL -> TEMPTALK ERSTELLEN
+     * ------------------------------------------------------------
      */
     if (
       matchedSetup &&
@@ -63,9 +68,9 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
         const existing = findOwnedChannelByUser(guild.id, member.id);
 
         /**
-         * Falls bereits ein Temp-Channel existiert:
-         * - nur wiederverwenden, wenn er noch existiert UND zum selben Setup gehört
-         * - sonst stale Channel ignorieren / löschen
+         * Falls schon ein eigener Temp-Channel existiert:
+         * - wiederverwenden, wenn er noch existiert und zum selben Setup gehört
+         * - sonst alten / kaputten Eintrag entfernen
          */
         if (existing) {
           const existingChannel = guild.channels.cache.get(existing.voiceChannelId);
@@ -89,6 +94,7 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
               console.error("[TempVoice] Fehler beim Zurückverschieben in bestehenden Temp-Channel:", error);
             });
 
+            await syncActiveChatAccess(guild, existing.voiceChannelId).catch(console.error);
             await ensureChannelPlacement(guild, existing.voiceChannelId).catch(console.error);
             return;
           } else {
@@ -118,6 +124,7 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
           console.log(
             `[TempVoice] Temp channel created successfully | channel=${created.voiceChannelId}`
           );
+          await syncActiveChatAccess(guild, created.voiceChannelId).catch(console.error);
           await ensureChannelPlacement(guild, created.voiceChannelId).catch(console.error);
         } else {
           console.log("[TempVoice] createTempChannel returned no channel data");
@@ -132,59 +139,70 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
     }
 
     /**
-     * Wenn jemand einen Temp-Channel verlässt:
-     * - leer -> löschen
-     * - Owner weg -> Ownership übertragen
-     * - danach ggf. zwischen Open/Closed verschieben
+     * ------------------------------------------------------------
+     * 3) USER VERLÄSST EINEN TEMPTALK
+     * ------------------------------------------------------------
      */
     if (oldChannelId) {
       const tempData = getTempChannel(guild.id, oldChannelId);
-      if (!tempData) return;
 
-      const oldChannel = guild.channels.cache.get(oldChannelId);
+      if (tempData) {
+        const oldChannel = guild.channels.cache.get(oldChannelId);
 
-      if (!oldChannel) {
-        console.log(
-          `[TempVoice] Old temp channel no longer exists -> cleaning store | channel=${oldChannelId}`
-        );
-        await deleteTempChannelSet(guild, oldChannelId).catch(console.error);
-        return;
-      }
-
-      if (oldChannel.members.size === 0) {
-        console.log(
-          `[TempVoice] Temp channel empty -> deleting | channel=${oldChannelId}`
-        );
-        await deleteTempChannelSet(guild, oldChannelId).catch(console.error);
-        return;
-      }
-
-      if (tempData.ownerId === member.id) {
-        const remainingMembers = [...oldChannel.members.values()]
-          .filter((m) => !m.user.bot);
-
-        if (remainingMembers.length > 0) {
-          const newOwner = remainingMembers[0];
+        if (!oldChannel) {
           console.log(
-            `[TempVoice] Owner left -> transferring ownership | old=${member.user.tag} | new=${newOwner.user.tag}`
+            `[TempVoice] Old temp channel no longer exists -> cleaning store | channel=${oldChannelId}`
           );
-          await transferOwnership(guild, oldChannelId, newOwner.id).catch(console.error);
+          await deleteTempChannelSet(guild, oldChannelId).catch(console.error);
+          return;
         }
-      }
 
-      await ensureChannelPlacement(guild, oldChannelId).catch(console.error);
+        if (oldChannel.members.size === 0) {
+          console.log(
+            `[TempVoice] Temp channel empty -> deleting | channel=${oldChannelId}`
+          );
+          await deleteTempChannelSet(guild, oldChannelId).catch(console.error);
+          return;
+        }
+
+        /**
+         * Wenn der Owner geht:
+         * - ersten verbleibenden Nicht-Bot als neuen Owner wählen
+         * - Name wird im Service automatisch an den neuen Owner angepasst
+         */
+        if (tempData.ownerId === member.id) {
+          const remainingMembers = [...oldChannel.members.values()]
+            .filter((m) => !m.user.bot);
+
+          if (remainingMembers.length > 0) {
+            const newOwner = remainingMembers[0];
+            console.log(
+              `[TempVoice] Owner left -> transferring ownership | old=${member.user.tag} | new=${newOwner.user.tag}`
+            );
+            await transferOwnership(guild, oldChannelId, newOwner.id).catch(console.error);
+          }
+        }
+
+        // Nach jedem Leave den aktiven Chat-Zugriff neu synchronisieren.
+        await syncActiveChatAccess(guild, oldChannelId).catch(console.error);
+        await ensureChannelPlacement(guild, oldChannelId).catch(console.error);
+      }
     }
 
     /**
-     * Wenn jemand einen bestehenden Temp-Channel joint:
-     * -> eventuell ist er jetzt "voll" und muss nach Talks Closed verschoben werden
+     * ------------------------------------------------------------
+     * 4) USER JOINT EINEN BESTEHENDEN TEMPTALK
+     * ------------------------------------------------------------
      */
     if (newChannelId) {
       const tempData = getTempChannel(guild.id, newChannelId);
+
       if (tempData) {
         console.log(
-          `[TempVoice] Joined existing temp channel -> checking placement | channel=${newChannelId}`
+          `[TempVoice] Joined existing temp channel -> checking placement and chat access | channel=${newChannelId}`
         );
+
+        await syncActiveChatAccess(guild, newChannelId).catch(console.error);
         await ensureChannelPlacement(guild, newChannelId).catch(console.error);
       }
     }
