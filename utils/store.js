@@ -4,18 +4,28 @@ const path = require("path");
 /**
  * Zentrale JSON-Datei für persistente Bot-Daten.
  *
- * Wichtige Info:
- * - Diese Datei liegt im Projekt unter /data/tempChannels.json
- * - Wenn dein Hosting ein persistentes Volume auf /app/data mapped,
- *   bleibt der Inhalt auch nach Neustarts erhalten
+ * Struktur grob:
+ * {
+ *   guilds: {
+ *     [guildId]: {
+ *       config: { setups: [...] },
+ *       channels: { ...laufende TempVoices... },
+ *       profiles: {
+ *         [userId]: {
+ *           global?: {...altes Profil/Fallback...},
+ *           scoped?: {
+ *             [profileScopeKey]: {...profil für bestimmtes Setup...}
+ *           }
+ *         }
+ *       }
+ *     }
+ *   }
+ * }
  */
 const DATA_FILE = path.join(__dirname, "..", "data", "tempChannels.json");
 
 /**
- * Stellt sicher, dass die JSON-Datei überhaupt existiert.
- *
- * Falls die Datei beim ersten Start noch nicht vorhanden ist,
- * wird sie mit einer leeren Grundstruktur angelegt.
+ * Stellt sicher, dass die JSON-Datei existiert.
  */
 function ensureDataFile() {
   if (!fs.existsSync(DATA_FILE)) {
@@ -28,18 +38,7 @@ function ensureDataFile() {
 }
 
 /**
- * Liest den kompletten Store aus der JSON-Datei.
- *
- * Rückgabeformat:
- * {
- *   guilds: {
- *     [guildId]: {
- *       config: { setups: [...] },
- *       channels: { ... },
- *       profiles: { ... }
- *     }
- *   }
- * }
+ * Liest den kompletten Store.
  */
 function readStore() {
   ensureDataFile();
@@ -60,11 +59,7 @@ function readStore() {
 }
 
 /**
- * Schreibt den kompletten Store zurück in die JSON-Datei.
- *
- * Hinweis:
- * - Das ist eine "vollständige" Schreiboperation
- * - Es wird also nicht teilweise gepatcht, sondern das gesamte Objekt gespeichert
+ * Schreibt den kompletten Store zurück.
  */
 function writeStore(data) {
   ensureDataFile();
@@ -72,27 +67,7 @@ function writeStore(data) {
 }
 
 /**
- * Migriert alte Configs auf die neue Struktur mit setups[].
- *
- * Alter Stand:
- * {
- *   joinToCreateChannelId,
- *   tempCategoryId
- * }
- *
- * Neuer Stand:
- * {
- *   setups: [
- *     {
- *       setupId,
- *       name,
- *       joinToCreateChannelId,
- *       sourceCategoryId,
- *       openCategoryId,
- *       closedCategoryId
- *     }
- *   ]
- * }
+ * Migriert alte Configs auf die neue Setup-Struktur.
  */
 function migrateLegacyConfig(config) {
   if (!config || typeof config !== "object") {
@@ -120,12 +95,57 @@ function migrateLegacyConfig(config) {
 }
 
 /**
- * Stellt sicher, dass eine Guild-Struktur im Store existiert.
+ * Migriert alte User-Profile auf die neue Struktur.
  *
- * Pro Guild speichern wir:
- * - config   -> Setups / allgemeine Konfiguration
- * - channels -> laufende Temp-Channels
- * - profiles -> persönliche User-Profile
+ * Alt:
+ * profiles[userId] = {
+ *   name,
+ *   userLimit,
+ *   isPrivate,
+ *   whitelist,
+ *   blacklist
+ * }
+ *
+ * Neu:
+ * profiles[userId] = {
+ *   global: { ... },
+ *   scoped: { ... }
+ * }
+ */
+function migrateLegacyUserProfile(profileValue) {
+  if (!profileValue || typeof profileValue !== "object") {
+    return {
+      global: null,
+      scoped: {}
+    };
+  }
+
+  // Neue Struktur bereits vorhanden
+  if (
+    Object.prototype.hasOwnProperty.call(profileValue, "global") ||
+    Object.prototype.hasOwnProperty.call(profileValue, "scoped")
+  ) {
+    return {
+      global:
+        profileValue.global && typeof profileValue.global === "object"
+          ? profileValue.global
+          : null,
+      scoped:
+        profileValue.scoped && typeof profileValue.scoped === "object"
+          ? profileValue.scoped
+          : {}
+    };
+  }
+
+  // Alte Struktur -> in global verschieben
+  return {
+    global: profileValue,
+    scoped: {}
+  };
+}
+
+/**
+ * Stellt sicher, dass eine Guild-Struktur im Store existiert.
  */
 function ensureGuild(store, guildId) {
   if (!store.guilds[guildId]) {
@@ -146,6 +166,11 @@ function ensureGuild(store, guildId) {
 
   if (!store.guilds[guildId].profiles || typeof store.guilds[guildId].profiles !== "object") {
     store.guilds[guildId].profiles = {};
+  }
+
+  // Bestehende Profile in neue Struktur migrieren
+  for (const [userId, profileValue] of Object.entries(store.guilds[guildId].profiles)) {
+    store.guilds[guildId].profiles[userId] = migrateLegacyUserProfile(profileValue);
   }
 }
 
@@ -169,11 +194,7 @@ function getGuildConfig(guildId) {
 }
 
 /**
- * Speichert die komplette Guild-Config.
- *
- * Wichtiger Punkt:
- * - vorhandene Felder bleiben erhalten
- * - setups werden nur überschrieben, wenn wirklich ein setups-Array übergeben wurde
+ * Speichert eine komplette Guild-Config.
  */
 function saveGuildConfig(guildId, config) {
   const store = readStore();
@@ -239,9 +260,6 @@ function removeGuildSetup(guildId, setupId) {
 
 /**
  * Aktualisiert ein bestehendes Setup teilweise.
- *
- * Beispiel:
- * updateGuildSetup(guildId, setupId, { openCategoryId: "123" })
  */
 function updateGuildSetup(guildId, setupId, updates) {
   const store = readStore();
@@ -274,7 +292,7 @@ function findGuildSetupByJoinChannel(guildId, joinChannelId) {
 }
 
 /**
- * Findet ein Setup anhand seiner setupId.
+ * Findet ein Setup per setupId.
  */
 function findGuildSetupById(guildId, setupId) {
   const setups = getGuildSetups(guildId);
@@ -282,11 +300,7 @@ function findGuildSetupById(guildId, setupId) {
 }
 
 /**
- * Gibt die Daten eines aktiven Temp-Channels zurück.
- *
- * Rückgabe:
- * - channelData Objekt
- * - oder null, wenn der Channel nicht mehr im Store existiert
+ * Gibt Daten eines aktiven Temp-Channels zurück.
  */
 function getTempChannel(guildId, voiceChannelId) {
   const store = readStore();
@@ -315,10 +329,7 @@ function deleteTempChannel(guildId, voiceChannelId) {
 }
 
 /**
- * Findet den aktuell von einem User "besessenen" Temp-Channel.
- *
- * Das wird verwendet, wenn jemand erneut in einen Join-to-Create joint
- * und geprüft werden soll, ob schon ein laufender Temp-Talk für ihn existiert.
+ * Findet den aktuell von einem User geowneten Temp-Channel.
  */
 function findOwnedChannelByUser(guildId, userId) {
   const store = readStore();
@@ -337,37 +348,106 @@ function findOwnedChannelByUser(guildId, userId) {
 }
 
 /**
- * Lädt das persönliche Profil eines Users.
+ * Gibt den Profil-Scope-Key zurück.
  *
- * Dieses Profil enthält z. B.:
- * - bevorzugter Talkname
- * - Userlimit
- * - Privacy
- * - White-/Blacklist
+ * Der Scope basiert auf setupId, weil Setups in deinem Bot die beste
+ * Zuordnung zu "pro Kategorie / Bereich" sind.
  */
-function getUserProfile(guildId, userId) {
-  const store = readStore();
-  ensureGuild(store, guildId);
-  return store.guilds[guildId].profiles[userId] || null;
+function normalizeProfileScopeKey(profileScopeKey) {
+  if (!profileScopeKey || typeof profileScopeKey !== "string") {
+    return null;
+  }
+
+  return profileScopeKey.trim() || null;
 }
 
 /**
- * Speichert das persönliche Profil eines Users.
+ * Lädt das persönliche User-Profil.
+ *
+ * Verhalten:
+ * - Wenn profileScopeKey gesetzt ist, wird zuerst scoped[profileScopeKey] gesucht
+ * - Falls nicht vorhanden, wird auf global zurückgefallen
+ * - Ohne Scope wird direkt global geladen
  */
-function saveUserProfile(guildId, userId, profile) {
+function getUserProfile(guildId, userId, profileScopeKey = null) {
   const store = readStore();
   ensureGuild(store, guildId);
-  store.guilds[guildId].profiles[userId] = profile;
+
+  const normalizedScopeKey = normalizeProfileScopeKey(profileScopeKey);
+  const profileContainer = store.guilds[guildId].profiles[userId];
+
+  if (!profileContainer) {
+    return null;
+  }
+
+  const migratedProfileContainer = migrateLegacyUserProfile(profileContainer);
+
+  if (normalizedScopeKey) {
+    return migratedProfileContainer.scoped[normalizedScopeKey] || migratedProfileContainer.global || null;
+  }
+
+  return migratedProfileContainer.global || null;
+}
+
+/**
+ * Speichert das persönliche User-Profil.
+ *
+ * Verhalten:
+ * - Mit profileScopeKey -> scoped speichern
+ * - Ohne profileScopeKey -> global speichern
+ */
+function saveUserProfile(guildId, userId, profile, profileScopeKey = null) {
+  const store = readStore();
+  ensureGuild(store, guildId);
+
+  const normalizedScopeKey = normalizeProfileScopeKey(profileScopeKey);
+  const currentContainer = migrateLegacyUserProfile(store.guilds[guildId].profiles[userId]);
+
+  if (normalizedScopeKey) {
+    currentContainer.scoped[normalizedScopeKey] = profile;
+  } else {
+    currentContainer.global = profile;
+  }
+
+  store.guilds[guildId].profiles[userId] = currentContainer;
   writeStore(store);
 }
 
 /**
  * Entfernt ein User-Profil.
+ *
+ * Verhalten:
+ * - Mit profileScopeKey -> nur dieses scoped Profil löschen
+ * - Ohne profileScopeKey -> gesamtes Profil des Users löschen
  */
-function deleteUserProfile(guildId, userId) {
+function deleteUserProfile(guildId, userId, profileScopeKey = null) {
   const store = readStore();
   ensureGuild(store, guildId);
-  delete store.guilds[guildId].profiles[userId];
+
+  const normalizedScopeKey = normalizeProfileScopeKey(profileScopeKey);
+
+  if (!store.guilds[guildId].profiles[userId]) {
+    return;
+  }
+
+  if (!normalizedScopeKey) {
+    delete store.guilds[guildId].profiles[userId];
+    writeStore(store);
+    return;
+  }
+
+  const currentContainer = migrateLegacyUserProfile(store.guilds[guildId].profiles[userId]);
+  delete currentContainer.scoped[normalizedScopeKey];
+
+  const hasGlobal = !!currentContainer.global;
+  const hasScoped = Object.keys(currentContainer.scoped).length > 0;
+
+  if (!hasGlobal && !hasScoped) {
+    delete store.guilds[guildId].profiles[userId];
+  } else {
+    store.guilds[guildId].profiles[userId] = currentContainer;
+  }
+
   writeStore(store);
 }
 

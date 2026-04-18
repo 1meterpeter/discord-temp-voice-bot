@@ -13,8 +13,12 @@ const {
 } = require("../services/tempChannelService");
 
 /**
- * Verhindert doppelte Channel-Erstellung, wenn Discord kurz nacheinander
+ * Verhindert doppelte Channel-Erstellung, wenn Discord sehr kurz hintereinander
  * mehrere VoiceStateUpdates für denselben User feuert.
+ *
+ * Beispiel:
+ * Beim Join in einen Join-to-Create-Channel kann Discord in kurzer Folge
+ * mehrere Events auslösen. Mit diesem Lock verhindern wir doppelte TempChannels.
  */
 const creationLocks = new Set();
 
@@ -29,20 +33,56 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
     const oldChannelId = oldState.channelId;
     const newChannelId = newState.channelId;
 
+    /**
+     * Wichtige Zustände:
+     *
+     * hasChannelChanged:
+     * - true, wenn der User den Voicechannel tatsächlich gewechselt hat
+     * - false, wenn nur Stream/Mute/Kamera/etc. geändert wurde
+     *
+     * hasLeftChannel:
+     * - true, wenn User vorher in einem Channel war und nun entweder draußen
+     *   oder in einem anderen Channel ist
+     *
+     * hasJoinedChannel:
+     * - true, wenn User jetzt in einem Channel ist und vorher entweder draußen
+     *   oder in einem anderen Channel war
+     */
+    const hasChannelChanged = oldChannelId !== newChannelId;
+    const hasLeftChannel = !!oldChannelId && hasChannelChanged;
+    const hasJoinedChannel = !!newChannelId && hasChannelChanged;
+
     console.log(
-      `[TempVoice] VoiceStateUpdate | guild=${guild.id} | user=${member.user.tag} | old=${oldChannelId ?? "none"} | new=${newChannelId ?? "none"}`
+      `[TempVoice] VoiceStateUpdate | guild=${guild.id} | user=${member.user.tag} | old=${oldChannelId ?? "none"} | new=${newChannelId ?? "none"} | changed=${hasChannelChanged}`
     );
+
+    /**
+     * Wenn sich der eigentliche Voicechannel NICHT geändert hat,
+     * ignorieren wir das Event vollständig.
+     *
+     * Dadurch verhindern wir Bugs bei:
+     * - Stream starten / stoppen
+     * - Kamera an / aus
+     * - Mute / Unmute
+     * - Deaf / Undeaf
+     * - sonstigen Voice-State-Änderungen innerhalb desselben Channels
+     */
+    if (!hasChannelChanged) {
+      return;
+    }
 
     /**
      * ------------------------------------------------------------
      * 1) JOIN-TO-CREATE CHECK
      * ------------------------------------------------------------
+     *
+     * Nur relevant, wenn der User wirklich in einen neuen Channel gejoint ist.
      */
-    const matchedSetup = newChannelId
+    const matchedSetup = hasJoinedChannel
       ? findGuildSetupByJoinChannel(guild.id, newChannelId)
       : null;
 
-    if (newChannelId) {
+    if (hasJoinedChannel) {
       console.log(
         `[TempVoice] Join-Check | channel=${newChannelId} | setup=${matchedSetup ? matchedSetup.setupId : "none"}`
       );
@@ -50,12 +90,16 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
 
     /**
      * ------------------------------------------------------------
-     * 2) USER JOINT EINEN CREATE-CHANNEL -> TEMPTALK ERSTELLEN
+     * 2) USER JOINT EINEN JOIN-TO-CREATE CHANNEL
      * ------------------------------------------------------------
+     *
+     * Dann soll entweder:
+     * - ein bestehender eigener TempChannel wiederverwendet werden
+     * - oder ein neuer TempChannel erstellt werden
      */
     if (
       matchedSetup &&
-      oldChannelId !== newChannelId &&
+      hasJoinedChannel &&
       !creationLocks.has(member.id)
     ) {
       creationLocks.add(member.id);
@@ -68,9 +112,16 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
         const existing = findOwnedChannelByUser(guild.id, member.id);
 
         /**
-         * Falls schon ein eigener Temp-Channel existiert:
-         * - wiederverwenden, wenn er noch existiert und zum selben Setup gehört
-         * - sonst alten / kaputten Eintrag entfernen
+         * Falls bereits ein eigener TempVoice für diesen User existiert:
+         *
+         * Fall A:
+         * - Channel existiert nicht mehr -> Store-Eintrag bereinigen
+         *
+         * Fall B:
+         * - Channel existiert und gehört zum selben Setup -> wiederverwenden
+         *
+         * Fall C:
+         * - Channel existiert, gehört aber zu anderem Setup -> alten löschen
          */
         if (existing) {
           const existingChannel = guild.channels.cache.get(existing.voiceChannelId);
@@ -91,7 +142,10 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
             );
 
             await member.voice.setChannel(existingChannel).catch((error) => {
-              console.error("[TempVoice] Fehler beim Zurückverschieben in bestehenden Temp-Channel:", error);
+              console.error(
+                "[TempVoice] Fehler beim Zurückverschieben in bestehenden Temp-Channel:",
+                error
+              );
             });
 
             await syncActiveChatAccess(guild, existing.voiceChannelId).catch(console.error);
@@ -124,6 +178,7 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
           console.log(
             `[TempVoice] Temp channel created successfully | channel=${created.voiceChannelId}`
           );
+
           await syncActiveChatAccess(guild, created.voiceChannelId).catch(console.error);
           await ensureChannelPlacement(guild, created.voiceChannelId).catch(console.error);
         } else {
@@ -140,15 +195,22 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
 
     /**
      * ------------------------------------------------------------
-     * 3) USER VERLÄSST EINEN TEMPTALK
+     * 3) USER VERLÄSST EINEN BESTEHENDEN TEMPVOICE
      * ------------------------------------------------------------
+     *
+     * Dieser Block läuft jetzt NUR bei echtem Leave / Move.
+     * Genau das behebt den Bug mit Stream / Kamera / Mute usw.
      */
-    if (oldChannelId) {
+    if (hasLeftChannel) {
       const tempData = getTempChannel(guild.id, oldChannelId);
 
       if (tempData) {
         const oldChannel = guild.channels.cache.get(oldChannelId);
 
+        /**
+         * Falls der Channel im Cache nicht mehr existiert,
+         * wird der Store bereinigt.
+         */
         if (!oldChannel) {
           console.log(
             `[TempVoice] Old temp channel no longer exists -> cleaning store | channel=${oldChannelId}`
@@ -157,6 +219,9 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
           return;
         }
 
+        /**
+         * Wenn der Channel leer ist, wird er gelöscht.
+         */
         if (oldChannel.members.size === 0) {
           console.log(
             `[TempVoice] Temp channel empty -> deleting | channel=${oldChannelId}`
@@ -166,9 +231,12 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
         }
 
         /**
-         * Wenn der Owner geht:
-         * - ersten verbleibenden Nicht-Bot als neuen Owner wählen
-         * - Name wird im Service automatisch an den neuen Owner angepasst
+         * Wenn der Owner den TempVoice wirklich verlassen hat,
+         * wird Ownership an den ersten verbleibenden Nicht-Bot übertragen.
+         *
+         * Wichtig:
+         * Dieser Block läuft NICHT mehr bei Stream/Mute/Kamera,
+         * weil wir oben bereits auf echten Channel-Wechsel prüfen.
          */
         if (tempData.ownerId === member.id) {
           const remainingMembers = [...oldChannel.members.values()]
@@ -176,14 +244,20 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
 
           if (remainingMembers.length > 0) {
             const newOwner = remainingMembers[0];
+
             console.log(
               `[TempVoice] Owner left -> transferring ownership | old=${member.user.tag} | new=${newOwner.user.tag}`
             );
+
             await transferOwnership(guild, oldChannelId, newOwner.id).catch(console.error);
           }
         }
 
-        // Nach jedem Leave den aktiven Chat-Zugriff neu synchronisieren.
+        /**
+         * Nach jedem echten Leave:
+         * - Textchat-Zugriff neu berechnen
+         * - Channel ggf. zwischen Open/Closed verschieben
+         */
         await syncActiveChatAccess(guild, oldChannelId).catch(console.error);
         await ensureChannelPlacement(guild, oldChannelId).catch(console.error);
       }
@@ -191,10 +265,14 @@ module.exports = async function handleVoiceStateUpdate(oldState, newState) {
 
     /**
      * ------------------------------------------------------------
-     * 4) USER JOINT EINEN BESTEHENDEN TEMPTALK
+     * 4) USER JOINT EINEN BEREITS BESTEHENDEN TEMPVOICE
      * ------------------------------------------------------------
+     *
+     * Dann müssen wir:
+     * - aktiven Textchat-Zugriff neu berechnen
+     * - prüfen, ob der Channel jetzt voll ist
      */
-    if (newChannelId) {
+    if (hasJoinedChannel) {
       const tempData = getTempChannel(guild.id, newChannelId);
 
       if (tempData) {
